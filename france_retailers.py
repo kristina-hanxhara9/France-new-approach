@@ -168,6 +168,110 @@ KNOWN_BUYING_GROUPS = [
 
 CHAIN_SIREN_THRESHOLD = 3
 
+# ---------------------------------------------------------------------------
+# MAJOR ONLINE & OMNI-CHANNEL RETAILERS — static reference list
+# ---------------------------------------------------------------------------
+# These retailers sell CE/MDA/Mobile but register under generic APE codes
+# (47.11F hypermarkets, 47.19Z department stores, 47.91B e-commerce) or have
+# no physical retail APE at all.  They are NOT discovered by our APE queries.
+# This list is manually curated from market research.
+#
+# SIRENs are best-effort — the script attempts a SIRENE API lookup to pull
+# live registration data.  If a SIREN is wrong or the lookup fails, the row
+# still appears with the static data and blank SIRENE fields.
+
+MAJOR_ONLINE_OMNI_RETAILERS = [
+    {
+        "name": "Amazon France",
+        "siren": "487773882",
+        "sells_ce": "Yes", "sells_mda": "Yes", "sells_mobile": "Yes",
+        "type": "E-commerce",
+        "notes": "Dominant across all three. First- and third-party. "
+                 "Largest single e-commerce platform in France by GMV.",
+    },
+    {
+        "name": "Cdiscount",
+        "siren": "424059332",
+        "sells_ce": "Yes", "sells_mda": "Yes", "sells_mobile": "Yes",
+        "type": "E-commerce",
+        "notes": "Casino Group. Strong CE and MDA, significant mobile range. "
+                 "Large marketplace. Top 2-3 e-commerce player in France.",
+    },
+    {
+        "name": "Rue du Commerce",
+        "siren": "422797857",
+        "sells_ce": "Yes", "sells_mda": "Yes", "sells_mobile": "Yes",
+        "type": "E-commerce",
+        "notes": "Carrefour-owned. CE-heavy, good MDA range, mobile present. "
+                 "Also a marketplace.",
+    },
+    {
+        "name": "Rakuten France",
+        "siren": "432647584",
+        "sells_ce": "Yes", "sells_mda": "Partial", "sells_mobile": "Yes",
+        "type": "E-commerce",
+        "notes": "Primarily marketplace. CE and mobile strong (new and used). "
+                 "MDA more limited — bigger items less popular on marketplace model.",
+    },
+    {
+        "name": "Veepee (ex-Vente-Privée)",
+        "siren": "434588947",
+        "sells_ce": "Yes", "sells_mda": "Yes", "sells_mobile": "Partial",
+        "type": "E-commerce",
+        "notes": "Flash sale model. CE and MDA appear regularly in sales events. "
+                 "Mobile handsets less frequent. Brands use for stock clearance.",
+    },
+    {
+        "name": "La Redoute",
+        "siren": "477180186",
+        "sells_ce": "Partial", "sells_mda": "Yes", "sells_mobile": "No",
+        "type": "E-commerce",
+        "notes": "Home/lifestyle marketplace. MDA (especially SDA) is meaningful. "
+                 "CE more selective. Not a real mobile destination.",
+    },
+    {
+        "name": "LDLC",
+        "siren": "403554181",
+        "sells_ce": "Yes", "sells_mda": "No", "sells_mobile": "Partial",
+        "type": "E-commerce + Stores",
+        "notes": "Computing and components specialist. Monitors, peripherals, "
+                 "PC hardware strong. Mobile accessories yes, handsets limited. "
+                 "Also has physical stores.",
+    },
+    {
+        "name": "Ubaldi",
+        "siren": "422496450",
+        "sells_ce": "Yes", "sells_mda": "Yes", "sells_mobile": "Partial",
+        "type": "E-commerce",
+        "notes": "Pure-play online, CE and MDA focused. Less well-known but "
+                 "genuine volume, particularly in MDA.",
+    },
+    {
+        "name": "ManoMano",
+        "siren": "792439493",
+        "sells_ce": "No", "sells_mda": "Partial", "sells_mobile": "No",
+        "type": "E-commerce",
+        "notes": "DIY and garden primary. But built-in appliances (hobs, ovens, "
+                 "dishwashers) make it a real MDA channel for encastrable category.",
+    },
+    {
+        "name": "ShowroomPrivé",
+        "siren": "538811837",
+        "sells_ce": "Partial", "sells_mda": "Partial", "sells_mobile": "No",
+        "type": "E-commerce",
+        "notes": "Flash sales like Veepee but smaller. CE and SDA appear in "
+                 "brand sales events. Not a primary channel.",
+    },
+    {
+        "name": "Costco France",
+        "siren": "821227837",
+        "sells_ce": "Yes", "sells_mda": "Yes", "sells_mobile": "Partial",
+        "type": "Warehouse Club",
+        "notes": "9 physical locations + online. Sells TVs, audio, MDA — "
+                 "often good value on premium brands. Niche but real account.",
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # HELPERS — SIRENE
@@ -502,6 +606,86 @@ def enrich_bodacc(df):
 
 
 # ---------------------------------------------------------------------------
+# HELPERS — Online & omni-channel retailer enrichment
+# ---------------------------------------------------------------------------
+
+
+def enrich_omni_retailers():
+    """
+    Build a DataFrame of major online/omni retailers from the static list.
+    For each, attempt a SIRENE API lookup by SIREN to pull live data.
+    Returns a DataFrame ready to write as an Excel sheet.
+    """
+    print("\n--- Enriching online & omni-channel retailers via SIRENE ---")
+    headers = {"Authorization": f"Bearer {BEARER_TOKEN}", "Accept": "application/json"}
+    rows = []
+
+    for entry in MAJOR_ONLINE_OMNI_RETAILERS:
+        siren = entry["siren"]
+        row = {
+            "name": entry["name"],
+            "siren": siren,
+            "siret": "",
+            "type": entry["type"],
+            "sells_ce": entry["sells_ce"],
+            "sells_mda": entry["sells_mda"],
+            "sells_mobile": entry["sells_mobile"],
+            "ape_code": "",
+            "address": "",
+            "postcode": "",
+            "city": "",
+            "size_band": "",
+            "status": "",
+            "notes": entry["notes"],
+        }
+
+        # Try SIRENE lookup by SIREN
+        try:
+            time.sleep(1)
+            params = {
+                "q": f"siren:{siren} AND etatAdministratifEtablissement:A",
+                "nombre": 1,
+                "champs": ",".join(FIELDS),
+            }
+            resp = requests.get(BASE_URL, headers=headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                etabs = data.get("etablissements", [])
+                if etabs:
+                    rec = etabs[0]
+                    row["siret"] = rec.get("siret", "")
+                    row["ape_code"] = rec.get("activitePrincipaleEtablissement", "")
+                    row["size_band"] = rec.get("trancheEffectifsEtablissement", "")
+                    row["status"] = rec.get("etatAdministratifEtablissement", "")
+                    row["address"] = build_address(rec)
+                    row["postcode"] = (
+                        rec.get("codePostalEtablissement")
+                        or (rec.get("adresseEtablissement") or {})
+                           .get("codePostalEtablissement", "")
+                    )
+                    row["city"] = (
+                        rec.get("libelleCommuneEtablissement")
+                        or (rec.get("adresseEtablissement") or {})
+                           .get("libelleCommuneEtablissement", "")
+                    )
+                    print(f"  [SIRENE] {entry['name']}: found (SIRET {row['siret']}, "
+                          f"APE {row['ape_code']})")
+                else:
+                    print(f"  [SIRENE] {entry['name']}: SIREN {siren} — no active "
+                          f"establishments found")
+            else:
+                print(f"  [SIRENE] {entry['name']}: HTTP {resp.status_code}")
+        except Exception as exc:
+            print(f"  [SIRENE] {entry['name']}: lookup failed — {exc}")
+
+        rows.append(row)
+
+    print(f"  Done: {sum(1 for r in rows if r['siret'])}/{len(rows)} "
+          f"enriched with SIRENE data")
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # HELPERS — turnover formatting
 # ---------------------------------------------------------------------------
 
@@ -686,7 +870,12 @@ def main():
     df = enrich_bodacc(df)
 
     # =====================================================================
-    # PHASE 6 — Output (one sheet per channel + All + Metadata)
+    # PHASE 6 — Online & omni-channel retailers (static + SIRENE lookup)
+    # =====================================================================
+    omni_df = enrich_omni_retailers()
+
+    # =====================================================================
+    # PHASE 7 — Output (per-channel sheets + All + Online/Omni + Metadata)
     # =====================================================================
     output_cols = [
         "siret", "siren", "legal_name", "channel", "retailer_type",
@@ -723,12 +912,19 @@ def main():
         # Combined sheet with all retailers
         df.to_excel(writer, index=False, sheet_name="All Retailers")
 
+        # Online & omni-channel retailers (static list + SIRENE enrichment)
+        omni_df.to_excel(writer, index=False, sheet_name="Online & Omni Retail")
+
         # Metadata sheet
         meta_rows = [
             ("Notice", CONFIDENTIALITY_NOTICE),
             ("Generated", time.strftime("%Y-%m-%d %H:%M:%S")),
             ("Source — retailers",
              "INSEE SIRENE API v3 — national business registry"),
+            ("Source — online/omni retailers",
+             "Static reference list based on market research. SIRENE API used "
+             "to enrich with live registration data where SIREN is known. "
+             "NOT discovered by APE code query — manually curated."),
             ("Source — turnover (primary)",
              "INPI RNE API (data.inpi.fr) — actual chiffre d'affaires "
              "from filed annual accounts, updated daily, covers FY 2017-present. "
@@ -760,7 +956,7 @@ def main():
 
     print(f"\nWrote {len(df)} rows to {output_file}")
     print(f"  Sheets: {', '.join(ch for ch in channel_names if ch in channel_dfs)}, "
-          f"All Retailers, Metadata")
+          f"All Retailers, Online & Omni Retail, Metadata")
 
     # ----- Summary -----
     print(f"\n{'='*60}")
@@ -785,8 +981,13 @@ def main():
     print(f"  No turnover info        : {len(df) - n_actual - n_est:>5} SIRETs")
     print(f"  BODACC filing detected  : {n_bodacc:>5} SIRENs  (health signal only)")
 
-    print(f"\n  Total unique SIRETs : {len(df)}")
-    print(f"  Total unique SIRENs : {df['siren'].nunique()}")
+    omni_enriched = (omni_df["siret"] != "").sum() if not omni_df.empty else 0
+    print(f"\n--- Online & omni-channel retailers ---")
+    print(f"  Curated list          : {len(omni_df):>5} retailers")
+    print(f"  SIRENE-enriched       : {omni_enriched:>5} (live data found)")
+
+    print(f"\n  Total unique SIRETs (specialist): {len(df)}")
+    print(f"  Total unique SIRENs (specialist): {df['siren'].nunique()}")
 
 
 if __name__ == "__main__":
