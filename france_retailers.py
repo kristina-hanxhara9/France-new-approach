@@ -644,7 +644,7 @@ def main():
     )
 
     # =====================================================================
-    # PHASE 4 — Turnover enrichment (INPI -> Pappers -> band estimate)
+    # PHASE 4 — Turnover enrichment (INPI API -> band estimate fallback)
     # =====================================================================
     unique_sirens = df["siren"].unique().tolist()
     turnover_map = load_turnover_data(unique_sirens)
@@ -686,73 +686,104 @@ def main():
     df = enrich_bodacc(df)
 
     # =====================================================================
-    # PHASE 6 — Output
+    # PHASE 6 — Output (one sheet per channel + All + Metadata)
     # =====================================================================
-    df = df[[
+    output_cols = [
         "siret", "siren", "legal_name", "channel", "retailer_type",
         "ape_code", "address", "postcode", "city", "size_band",
-        "turnover_display", "turnover_estimate", "turnover_year",
+        "turnover_actual", "turnover_est_range", "turnover_year",
         "turnover_source",
         "bodacc_filing", "bodacc_last_date",
-    ]]
+    ]
 
     df = df.rename(columns={
         "turnover_display": "turnover_actual",
-        "turnover_est_range": "turnover_est_range",
+        "turnover_estimate": "turnover_est_range",
     })
+    df = df[output_cols]
+
+    # Build per-channel DataFrames.  A retailer tagged "CE | Photo" appears
+    # in both the CE sheet and the Photo sheet.
+    channel_names = sorted(set(APE_CODES.values()))
+    channel_dfs = {}
+    for ch in channel_names:
+        mask = df["channel"].str.contains(ch, regex=False)
+        ch_df = df[mask].copy()
+        if not ch_df.empty:
+            channel_dfs[ch] = ch_df
 
     output_file = "france_retailers.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Retailers")
+        # One sheet per channel
+        for ch in channel_names:
+            if ch in channel_dfs:
+                sheet_name = ch[:31]  # Excel sheet name max 31 chars
+                channel_dfs[ch].to_excel(writer, index=False, sheet_name=sheet_name)
 
+        # Combined sheet with all retailers
+        df.to_excel(writer, index=False, sheet_name="All Retailers")
+
+        # Metadata sheet
         meta_rows = [
             ("Notice", CONFIDENTIALITY_NOTICE),
             ("Generated", time.strftime("%Y-%m-%d %H:%M:%S")),
-            ("Source — retailers", "INSEE SIRENE API v3"),
+            ("Source — retailers",
+             "INSEE SIRENE API v3 — national business registry"),
             ("Source — turnover (primary)",
              "INPI RNE API (data.inpi.fr) — actual chiffre d'affaires "
-             "from filed annual accounts, updated daily, covers FY 2017-present"),
+             "from filed annual accounts, updated daily, covers FY 2017-present. "
+             "Free, requires registration."),
             ("Source — turnover (fallback)",
              "Employee band estimate — SIRENE trancheEffectifs mapped "
-             "to CE-sector turnover ranges"),
+             "to CE-sector turnover ranges. These are rough directional "
+             "estimates, NOT real figures."),
             ("Source — filing status",
-             "BODACC (bodacc-datadila.opendatasoft.com) — "
-             "official gazette, depot des comptes signal"),
+             "BODACC (bodacc-datadila.opendatasoft.com) — free, no auth. "
+             "Official gazette, depot des comptes = company is alive and filing."),
             ("Size filter", f"trancheEffectifs >= {SIZE_MIN}"),
             ("APE codes queried", ", ".join(APE_CODES.keys())),
-            ("Classification",
-             f"Chain = known chain name OR >= {CHAIN_SIREN_THRESHOLD} "
-             f"establishments per SIREN; "
-             f"Buying Group = known buying group name pattern; "
-             f"Independent = all others"),
+            ("Retailer type — Chain",
+             "Matched against known chain name list (FNAC, DARTY, BOULANGER, "
+             "ORANGE, SFR, etc.) OR SIREN has >= "
+             f"{CHAIN_SIREN_THRESHOLD} establishments in dataset. "
+             "This is OUR classification, not from any API."),
+            ("Retailer type — Buying Group",
+             "Matched against known buying group name list (EXPERT, EURONICS, "
+             "GITEM, PRO&CIE, PULSAT, CONNEXION, etc.). "
+             "This is OUR classification, not from any API."),
+            ("Retailer type — Independent",
+             "Default when no chain or buying group pattern matches and SIREN "
+             f"has < {CHAIN_SIREN_THRESHOLD} establishments."),
         ]
         meta = pd.DataFrame(meta_rows, columns=["Field", "Value"])
         meta.to_excel(writer, index=False, sheet_name="Metadata")
 
     print(f"\nWrote {len(df)} rows to {output_file}")
+    print(f"  Sheets: {', '.join(ch for ch in channel_names if ch in channel_dfs)}, "
+          f"All Retailers, Metadata")
 
     # ----- Summary -----
     print(f"\n{'='*60}")
     print(CONFIDENTIALITY_NOTICE)
     print(f"{'='*60}")
 
-    print("\n--- Channel breakdown ---")
-    for ch in sorted(set(APE_CODES.values())):
-        count = df["channel"].str.contains(ch, regex=False).sum()
+    print("\n--- Channel breakdown (per sheet) ---")
+    for ch in channel_names:
+        count = channel_dfs[ch].shape[0] if ch in channel_dfs else 0
         print(f"  {ch:15s}: {count:>5}")
 
     print("\n--- Retailer type breakdown ---")
     for rtype, count in df["retailer_type"].value_counts().items():
         print(f"  {rtype:15s}: {count:>5}")
 
-    n_actual = (df["turnover_display"] != "").sum()
-    n_est = (df["turnover_estimate"] != "").sum()
+    n_actual = (df["turnover_actual"] != "").sum()
+    n_est = (df["turnover_est_range"] != "").sum()
     n_bodacc = (df["bodacc_filing"] == "Yes").sum()
     print("\n--- Turnover enrichment ---")
-    print(f"  Actual CA (INPI)        : {n_actual:>5} SIRETs")
-    print(f"  Band estimate (fallback): {n_est:>5} SIRETs")
+    print(f"  Actual CA (INPI)        : {n_actual:>5} SIRETs  (real filed figures)")
+    print(f"  Band estimate (fallback): {n_est:>5} SIRETs  (our rough estimate)")
     print(f"  No turnover info        : {len(df) - n_actual - n_est:>5} SIRETs")
-    print(f"  BODACC filing detected  : {n_bodacc:>5} SIRENs")
+    print(f"  BODACC filing detected  : {n_bodacc:>5} SIRENs  (health signal only)")
 
     print(f"\n  Total unique SIRETs : {len(df)}")
     print(f"  Total unique SIRENs : {df['siren'].nunique()}")
