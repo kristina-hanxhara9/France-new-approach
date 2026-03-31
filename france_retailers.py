@@ -36,9 +36,8 @@ CONFIDENTIALITY_NOTICE = (
 # ---------------------------------------------------------------------------
 
 BEARER_TOKEN = ""      # INSEE SIRENE API token (required)
-PAPPERS_API_KEY = ""   # Pappers API key (optional — for turnover enrichment)
-INPI_USERNAME = ""     # INPI data.inpi.fr username (optional — alternative)
-INPI_PASSWORD = ""     # INPI data.inpi.fr password (optional — alternative)
+INPI_USERNAME = ""     # INPI data.inpi.fr username (free — for turnover enrichment)
+INPI_PASSWORD = ""     # INPI data.inpi.fr password (free — for turnover enrichment)
 
 APE_CODES = {
     "47.78C": "Photo",
@@ -84,7 +83,7 @@ SIZE_BANDS = [
 # TURNOVER ENRICHMENT CONFIGURATION
 # ---------------------------------------------------------------------------
 #
-# Three sources, tried in priority order:
+# Two sources, tried in priority order (both fully free):
 #
 # SOURCE 1 — INPI API (free, requires registration at data.inpi.fr)
 #   Provides annual accounts directly from the RNE (Registre National des
@@ -92,17 +91,12 @@ SIZE_BANDS = [
 #   (currently up to fiscal year 2024/2025).  Requires INPI_USERNAME and
 #   INPI_PASSWORD.  Quota: 10,000 requests/day.
 #
-# SOURCE 2 — Pappers API (100 free requests/month, then paid)
-#   Aggregates INPI data into a clean REST API.  Returns chiffre_d_affaires
-#   directly.  Requires PAPPERS_API_KEY.
-#   Docs: https://www.pappers.fr/api/documentation
-#
-# SOURCE 3 — Employee band estimate (always available, no auth needed)
+# SOURCE 2 — Employee band estimate (always available, no auth needed)
 #   Maps SIRENE trancheEffectifs to rough CE-sector turnover ranges.
-#   Used as fallback when neither INPI nor Pappers returns a figure.
+#   Used as fallback when INPI returns no figure for a SIREN.
 #
-# Set SKIP_TURNOVER_API = True to skip all API-based enrichment and use
-# only the employee band estimate.
+# Set SKIP_TURNOVER_API = True to skip INPI API calls and use only the
+# employee band estimate.
 
 SKIP_TURNOVER_API = False
 
@@ -378,54 +372,6 @@ def _inpi_get_turnover(siren, token):
 
 
 # ---------------------------------------------------------------------------
-# HELPERS — Turnover enrichment: Pappers API
-# ---------------------------------------------------------------------------
-
-
-def _pappers_get_turnover(siren):
-    """
-    Fetch turnover for a SIREN via the Pappers API.
-    Returns (turnover_eur, fiscal_year) or (None, None).
-    Docs: https://www.pappers.fr/api/documentation
-    """
-    if not PAPPERS_API_KEY:
-        return None, None
-
-    try:
-        resp = requests.get(
-            "https://api.pappers.fr/v2/entreprise",
-            params={"api_token": PAPPERS_API_KEY, "siren": siren},
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            return None, None
-
-        data = resp.json()
-
-        # Pappers returns finances as a list of yearly records
-        finances = data.get("finances", [])
-        if not finances:
-            # Try the direct chiffre_d_affaires field
-            ca = data.get("chiffre_d_affaires")
-            year = data.get("annee_finances")
-            if ca:
-                return float(ca), str(year) if year else ""
-            return None, None
-
-        # Get the most recent year
-        latest = max(finances, key=lambda f: f.get("annee", 0))
-        ca = latest.get("chiffre_d_affaires")
-        year = latest.get("annee")
-
-        if ca is not None:
-            return float(ca), str(year)
-        return None, None
-
-    except Exception:
-        return None, None
-
-
-# ---------------------------------------------------------------------------
 # HELPERS — Turnover enrichment: orchestrator
 # ---------------------------------------------------------------------------
 
@@ -468,29 +414,6 @@ def load_turnover_data(sirens_needed):
             print("  [INPI] Authentication failed, skipping.")
     else:
         print("\n--- Turnover enrichment: INPI credentials not set, skipping ---")
-
-    # --- Source 2: Pappers API (for remaining SIRENs) ---
-    if PAPPERS_API_KEY and sirens_remaining:
-        print(f"\n--- Turnover enrichment: Pappers API ({len(sirens_remaining)} remaining) ---")
-        done = 0
-        for siren in list(sirens_remaining):
-            ca, year = _pappers_get_turnover(siren)
-            if ca and ca > 0:
-                turnover_map[siren] = {
-                    "turnover_eur": ca,
-                    "year": year,
-                    "source": f"Pappers {year}",
-                }
-                sirens_remaining.discard(siren)
-            done += 1
-            if done % 25 == 0:
-                print(f"  [Pappers] {done} queried, "
-                      f"{len(turnover_map)} total with turnover …")
-            time.sleep(0.5)
-        print(f"  [Pappers] Done: {len(turnover_map)}/{len(sirens_needed)} "
-              f"SIRENs with turnover data")
-    elif not PAPPERS_API_KEY:
-        print("\n--- Turnover enrichment: Pappers API key not set, skipping ---")
 
     print(f"\n  Turnover API total: {len(turnover_map)}/{len(sirens_needed)} SIRENs "
           f"({len(sirens_remaining)} will use employee band estimate)")
@@ -789,9 +712,6 @@ def main():
             ("Source — turnover (primary)",
              "INPI RNE API (data.inpi.fr) — actual chiffre d'affaires "
              "from filed annual accounts, updated daily, covers FY 2017-present"),
-            ("Source — turnover (secondary)",
-             "Pappers API (pappers.fr) — aggregated INPI data, "
-             "100 free requests/month"),
             ("Source — turnover (fallback)",
              "Employee band estimate — SIRENE trancheEffectifs mapped "
              "to CE-sector turnover ranges"),
@@ -829,7 +749,7 @@ def main():
     n_est = (df["turnover_estimate"] != "").sum()
     n_bodacc = (df["bodacc_filing"] == "Yes").sum()
     print("\n--- Turnover enrichment ---")
-    print(f"  Actual CA (INPI/Pappers): {n_actual:>5} SIRETs")
+    print(f"  Actual CA (INPI)        : {n_actual:>5} SIRETs")
     print(f"  Band estimate (fallback): {n_est:>5} SIRETs")
     print(f"  No turnover info        : {len(df) - n_actual - n_est:>5} SIRETs")
     print(f"  BODACC filing detected  : {n_bodacc:>5} SIRENs")
