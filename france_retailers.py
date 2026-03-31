@@ -2,21 +2,19 @@
 """
 Query the French INSEE SIRENE API to find retailers across multiple channels,
 classify them (Chain / Buying Group / Independent), and enrich with turnover
-data from DGFiP open annual accounts + BODACC filing status.
+data from INPI / Pappers annual accounts + BODACC filing status.
 
 Set BEARER_TOKEN below and run: python france_retailers.py
 
 CONFIDENTIAL — INTERNAL USE ONLY
 This script and its output contain proprietary market intelligence data.
 Do not distribute, share, or publish results without explicit authorization.
-All data sourced from INSEE SIRENE (public registry) but the filtering logic,
-channel mappings, and retailer classification methodology are proprietary.
+All data sourced from public registries (INSEE, INPI, BODACC) but the
+filtering logic, channel mappings, and classification methodology are
+proprietary.
 """
 
-import io
-import os
 import time
-import zipfile
 from collections import Counter
 from pathlib import Path
 
@@ -34,10 +32,13 @@ CONFIDENTIALITY_NOTICE = (
 )
 
 # ---------------------------------------------------------------------------
-# CONFIGURATION — set your bearer token here
+# CONFIGURATION — set your tokens / keys here
 # ---------------------------------------------------------------------------
 
-BEARER_TOKEN = ""  # <-- paste your INSEE API token here
+BEARER_TOKEN = ""      # INSEE SIRENE API token (required)
+PAPPERS_API_KEY = ""   # Pappers API key (optional — for turnover enrichment)
+INPI_USERNAME = ""     # INPI data.inpi.fr username (optional — alternative)
+INPI_PASSWORD = ""     # INPI data.inpi.fr password (optional — alternative)
 
 APE_CODES = {
     "47.78C": "Photo",
@@ -80,46 +81,32 @@ SIZE_BANDS = [
 ]
 
 # ---------------------------------------------------------------------------
-# TURNOVER ENRICHMENT — DGFiP annual accounts
+# TURNOVER ENRICHMENT CONFIGURATION
 # ---------------------------------------------------------------------------
-# data.gouv.fr publishes annual account files. Each yearly release is a ZIP
-# containing one or more CSV files.  The dataset page lists resources per year.
-# We try the most recent years first (newest data wins).
 #
-# Schema varies by year but the turnover column is typically one of:
-#   ca, chiffre_d_affaires, chiffre_affaires, redi_r310
-# We try all known variants and take the first non-null.
+# Three sources, tried in priority order:
 #
-# Set DGFIP_YEARS to the years you want to try (most recent first).
-# Set DGFIP_CACHE_DIR to a folder for caching downloaded CSVs.
-# Set SKIP_DGFIP = True to skip this enrichment entirely.
+# SOURCE 1 — INPI API (free, requires registration at data.inpi.fr)
+#   Provides annual accounts directly from the RNE (Registre National des
+#   Entreprises).  Updated daily.  Data available from 2017 to present
+#   (currently up to fiscal year 2024/2025).  Requires INPI_USERNAME and
+#   INPI_PASSWORD.  Quota: 10,000 requests/day.
+#
+# SOURCE 2 — Pappers API (100 free requests/month, then paid)
+#   Aggregates INPI data into a clean REST API.  Returns chiffre_d_affaires
+#   directly.  Requires PAPPERS_API_KEY.
+#   Docs: https://www.pappers.fr/api/documentation
+#
+# SOURCE 3 — Employee band estimate (always available, no auth needed)
+#   Maps SIRENE trancheEffectifs to rough CE-sector turnover ranges.
+#   Used as fallback when neither INPI nor Pappers returns a figure.
+#
+# Set SKIP_TURNOVER_API = True to skip all API-based enrichment and use
+# only the employee band estimate.
 
-SKIP_DGFIP = False
-DGFIP_CACHE_DIR = Path("dgfip_cache")
-DGFIP_YEARS = [2023, 2022, 2021]
+SKIP_TURNOVER_API = False
 
-# Resource URLs per year on data.gouv.fr.  These are stable download links
-# for the "comptes annuels" dataset.  If a URL changes, update it here.
-DGFIP_URLS = {
-    2023: "https://www.data.gouv.fr/fr/datasets/r/0ace4da0-47e3-4753-bc2c-aa26e22e38df",
-    2022: "https://www.data.gouv.fr/fr/datasets/r/5a4a2744-70e7-4e6e-a3e0-ea7470755bcd",
-    2021: "https://www.data.gouv.fr/fr/datasets/r/9b2e4ec0-71b0-48ce-a5f2-1e89c4e0e36e",
-}
-
-# All known column names for turnover across DGFiP schema versions
-TURNOVER_COLUMN_CANDIDATES = [
-    "ca", "chiffre_d_affaires", "chiffre_affaires",
-    "redi_r310", "fl",
-]
-
-SIREN_COLUMN_CANDIDATES = ["siren", "SIREN", "siren_ent"]
-
-# ---------------------------------------------------------------------------
-# TURNOVER ESTIMATION FROM EMPLOYEE BAND — CE/retail sector proxies
-# ---------------------------------------------------------------------------
-# When DGFiP data is unavailable, use employee band as a rough proxy.
-# Ranges are directional estimates for the French CE/retail sector.
-
+# Rough CE-sector turnover ranges by employee band
 TURNOVER_ESTIMATE_BY_BAND = {
     "11": "€1M – €5M",
     "12": "€3M – €15M",
@@ -140,8 +127,6 @@ TURNOVER_ESTIMATE_BY_BAND = {
 # BODACC is the official gazette for commercial announcements.  Free, no auth.
 # We query it per SIREN to check for recent "depot des comptes" filings.
 # This is a health/activity signal, not a turnover number.
-#
-# Set SKIP_BODACC = True to skip (saves many API calls for large datasets).
 
 SKIP_BODACC = False
 BODACC_URL = "https://bodacc-datadila.opendatasoft.com/api/records/1.0/search/"
@@ -289,161 +274,226 @@ def fetch_all_for_code(ape_code):
 
 
 # ---------------------------------------------------------------------------
-# HELPERS — DGFiP annual accounts
+# HELPERS — Turnover enrichment: INPI API
 # ---------------------------------------------------------------------------
 
 
-def _find_column(columns, candidates):
-    """Return the first column name from *candidates* that exists in *columns*."""
-    cols_lower = {c.lower(): c for c in columns}
-    for cand in candidates:
-        if cand.lower() in cols_lower:
-            return cols_lower[cand.lower()]
-    return None
-
-
-def _read_csv_flexible(path_or_buf):
-    """Try common separators and encodings to read a DGFiP CSV."""
-    for sep in [";", ",", "\t"]:
-        for encoding in ["utf-8", "latin-1", "iso-8859-1"]:
-            try:
-                df = pd.read_csv(
-                    path_or_buf, sep=sep, encoding=encoding,
-                    dtype=str, low_memory=False, nrows=5,
-                )
-                if len(df.columns) > 2:
-                    # Re-read fully now that we know the format
-                    if hasattr(path_or_buf, "seek"):
-                        path_or_buf.seek(0)
-                    return pd.read_csv(
-                        path_or_buf, sep=sep, encoding=encoding,
-                        dtype=str, low_memory=False,
-                    )
-            except Exception:
-                if hasattr(path_or_buf, "seek"):
-                    path_or_buf.seek(0)
-                continue
-    return None
-
-
-def download_dgfip_file(year):
-    """Download and cache a DGFiP annual accounts file. Returns a DataFrame or None."""
-    url = DGFIP_URLS.get(year)
-    if not url:
-        print(f"  [DGFiP] No URL configured for {year}, skipping.")
+def _inpi_authenticate():
+    """Authenticate with the INPI API and return a bearer token, or None."""
+    if not INPI_USERNAME or not INPI_PASSWORD:
         return None
-
-    DGFIP_CACHE_DIR.mkdir(exist_ok=True)
-    cache_path = DGFIP_CACHE_DIR / f"comptes_{year}.csv"
-
-    # Use cached file if it exists
-    if cache_path.exists() and cache_path.stat().st_size > 0:
-        print(f"  [DGFiP] Using cached file for {year}: {cache_path}")
-        return _read_csv_flexible(str(cache_path))
-
-    print(f"  [DGFiP] Downloading {year} data … (this may take a minute)")
     try:
-        resp = requests.get(url, timeout=300, stream=True)
-        if resp.status_code != 200:
-            print(f"  [DGFiP] HTTP {resp.status_code} for {year}, skipping.")
-            return None
-
-        content_type = resp.headers.get("Content-Type", "")
-        raw = resp.content
-
-        # Handle ZIP files
-        if "zip" in content_type or url.endswith(".zip") or raw[:4] == b"PK\x03\x04":
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
-                if not csv_names:
-                    print(f"  [DGFiP] No CSV found inside ZIP for {year}.")
-                    return None
-                # Use the largest CSV (most likely the main data file)
-                csv_name = max(csv_names, key=lambda n: zf.getinfo(n).file_size)
-                print(f"  [DGFiP] Extracting {csv_name} from ZIP …")
-                with zf.open(csv_name) as f:
-                    data = f.read()
-                cache_path.write_bytes(data)
-                return _read_csv_flexible(str(cache_path))
-        else:
-            # Plain CSV
-            cache_path.write_bytes(raw)
-            return _read_csv_flexible(str(cache_path))
-
+        resp = requests.post(
+            "https://registre-national-entreprises.inpi.fr/api/sso/login",
+            json={"username": INPI_USERNAME, "password": INPI_PASSWORD},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("token")
+        print(f"  [INPI] Auth failed: HTTP {resp.status_code}")
     except Exception as exc:
-        print(f"  [DGFiP] Download failed for {year}: {exc}")
-        return None
+        print(f"  [INPI] Auth error: {exc}")
+    return None
 
 
-def load_dgfip_turnover(sirens_needed):
+def _inpi_get_turnover(siren, token):
     """
-    Load DGFiP annual accounts and return a dict: siren -> {year, turnover, source}.
-    Tries most recent year first.  Only loads SIRENs we actually need.
+    Fetch the most recent annual accounts for a SIREN from the INPI API.
+    Returns (turnover_eur, fiscal_year) or (None, None).
     """
-    if SKIP_DGFIP:
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(
+            f"https://registre-national-entreprises.inpi.fr/api/companies/{siren}/attachments",
+            headers=headers,
+            params={"type": "bilan"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None, None
+
+        attachments = resp.json()
+        if not attachments:
+            return None, None
+
+        # Get the most recent bilan
+        latest = None
+        for att in attachments if isinstance(attachments, list) else []:
+            year = att.get("dateCloture", "")[:4]
+            if not latest or year > latest.get("dateCloture", "")[:4]:
+                latest = att
+
+        if not latest:
+            return None, None
+
+        # Fetch the actual account data
+        att_id = latest.get("id")
+        if not att_id:
+            return None, None
+
+        detail_resp = requests.get(
+            f"https://registre-national-entreprises.inpi.fr/api/companies/{siren}/attachments/{att_id}",
+            headers=headers,
+            timeout=15,
+        )
+        if detail_resp.status_code != 200:
+            return None, None
+
+        detail = detail_resp.json()
+
+        # Extract turnover from the compte de résultat
+        # Field names vary: look for common patterns
+        ca = None
+        for key in ["chiffreAffairesNet", "fl", "ca", "chiffre_affaires"]:
+            val = detail.get(key)
+            if val is not None:
+                try:
+                    ca = float(str(val).replace(" ", "").replace(",", "."))
+                    if ca > 0:
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+        # Also check nested structures
+        if ca is None:
+            for section in ["compteResultat", "compte_resultat", "resultats"]:
+                sub = detail.get(section) or {}
+                for key in ["chiffreAffairesNet", "fl", "ca"]:
+                    val = sub.get(key)
+                    if val is not None:
+                        try:
+                            ca = float(str(val).replace(" ", "").replace(",", "."))
+                            if ca > 0:
+                                break
+                        except (ValueError, TypeError):
+                            continue
+                if ca and ca > 0:
+                    break
+
+        year = latest.get("dateCloture", "")[:4]
+        return (ca, year) if ca and ca > 0 else (None, None)
+
+    except Exception:
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# HELPERS — Turnover enrichment: Pappers API
+# ---------------------------------------------------------------------------
+
+
+def _pappers_get_turnover(siren):
+    """
+    Fetch turnover for a SIREN via the Pappers API.
+    Returns (turnover_eur, fiscal_year) or (None, None).
+    Docs: https://www.pappers.fr/api/documentation
+    """
+    if not PAPPERS_API_KEY:
+        return None, None
+
+    try:
+        resp = requests.get(
+            "https://api.pappers.fr/v2/entreprise",
+            params={"api_token": PAPPERS_API_KEY, "siren": siren},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None, None
+
+        data = resp.json()
+
+        # Pappers returns finances as a list of yearly records
+        finances = data.get("finances", [])
+        if not finances:
+            # Try the direct chiffre_d_affaires field
+            ca = data.get("chiffre_d_affaires")
+            year = data.get("annee_finances")
+            if ca:
+                return float(ca), str(year) if year else ""
+            return None, None
+
+        # Get the most recent year
+        latest = max(finances, key=lambda f: f.get("annee", 0))
+        ca = latest.get("chiffre_d_affaires")
+        year = latest.get("annee")
+
+        if ca is not None:
+            return float(ca), str(year)
+        return None, None
+
+    except Exception:
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# HELPERS — Turnover enrichment: orchestrator
+# ---------------------------------------------------------------------------
+
+
+def load_turnover_data(sirens_needed):
+    """
+    Try each turnover source in priority order for the given SIRENs.
+    Returns dict: siren -> {turnover_eur, year, source}.
+    """
+    if SKIP_TURNOVER_API:
         return {}
 
-    print("\n--- Loading DGFiP annual accounts for turnover data ---")
-    turnover_map = {}  # siren -> {year, turnover_eur, source}
+    turnover_map = {}
     sirens_remaining = set(sirens_needed)
 
-    for year in DGFIP_YEARS:
-        if not sirens_remaining:
-            break
+    # --- Source 1: INPI API ---
+    if INPI_USERNAME and INPI_PASSWORD:
+        print("\n--- Turnover enrichment: INPI API ---")
+        token = _inpi_authenticate()
+        if token:
+            print(f"  [INPI] Authenticated. Querying {len(sirens_remaining)} SIRENs …")
+            done = 0
+            for siren in list(sirens_remaining):
+                ca, year = _inpi_get_turnover(siren, token)
+                if ca and ca > 0:
+                    turnover_map[siren] = {
+                        "turnover_eur": ca,
+                        "year": year,
+                        "source": f"INPI {year}",
+                    }
+                    sirens_remaining.discard(siren)
+                done += 1
+                if done % 50 == 0:
+                    print(f"  [INPI] {done}/{len(sirens_needed)} queried, "
+                          f"{len(turnover_map)} with turnover …")
+                time.sleep(0.3)  # respect 10K/day quota
+            print(f"  [INPI] Done: {len(turnover_map)}/{len(sirens_needed)} "
+                  f"SIRENs with turnover data")
+        else:
+            print("  [INPI] Authentication failed, skipping.")
+    else:
+        print("\n--- Turnover enrichment: INPI credentials not set, skipping ---")
 
-        df = download_dgfip_file(year)
-        if df is None:
-            continue
-
-        # Find the SIREN column
-        siren_col = _find_column(df.columns, SIREN_COLUMN_CANDIDATES)
-        if not siren_col:
-            print(f"  [DGFiP] Cannot find SIREN column in {year} data. "
-                  f"Columns: {list(df.columns[:10])}")
-            continue
-
-        # Find the turnover column
-        ca_col = _find_column(df.columns, TURNOVER_COLUMN_CANDIDATES)
-        if not ca_col:
-            print(f"  [DGFiP] Cannot find turnover column in {year} data. "
-                  f"Columns: {list(df.columns[:15])}")
-            continue
-
-        print(f"  [DGFiP] {year}: using SIREN='{siren_col}', turnover='{ca_col}'")
-
-        # Normalise SIREN to 9-char string
-        df[siren_col] = df[siren_col].astype(str).str.strip().str.zfill(9)
-
-        # Filter to only our SIRENs
-        relevant = df[df[siren_col].isin(sirens_remaining)].copy()
-        if relevant.empty:
-            print(f"  [DGFiP] {year}: no matching SIRENs found.")
-            continue
-
-        # Parse turnover — handle French number format (comma decimal)
-        relevant[ca_col] = (
-            relevant[ca_col].astype(str)
-            .str.replace(" ", "", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-        relevant[ca_col] = pd.to_numeric(relevant[ca_col], errors="coerce")
-
-        # For each SIREN, keep the highest turnover if multiple rows
-        for siren, grp in relevant.groupby(siren_col):
-            best = grp[ca_col].max()
-            if pd.notna(best) and best > 0:
+    # --- Source 2: Pappers API (for remaining SIRENs) ---
+    if PAPPERS_API_KEY and sirens_remaining:
+        print(f"\n--- Turnover enrichment: Pappers API ({len(sirens_remaining)} remaining) ---")
+        done = 0
+        for siren in list(sirens_remaining):
+            ca, year = _pappers_get_turnover(siren)
+            if ca and ca > 0:
                 turnover_map[siren] = {
+                    "turnover_eur": ca,
                     "year": year,
-                    "turnover_eur": best,
-                    "source": f"DGFiP {year}",
+                    "source": f"Pappers {year}",
                 }
                 sirens_remaining.discard(siren)
+            done += 1
+            if done % 25 == 0:
+                print(f"  [Pappers] {done} queried, "
+                      f"{len(turnover_map)} total with turnover …")
+            time.sleep(0.5)
+        print(f"  [Pappers] Done: {len(turnover_map)}/{len(sirens_needed)} "
+              f"SIRENs with turnover data")
+    elif not PAPPERS_API_KEY:
+        print("\n--- Turnover enrichment: Pappers API key not set, skipping ---")
 
-        print(f"  [DGFiP] {year}: matched {len(sirens_needed) - len(sirens_remaining)} "
-              f"SIRENs so far ({len(sirens_remaining)} remaining)")
-
-    print(f"  [DGFiP] Total: turnover data found for "
-          f"{len(turnover_map)}/{len(sirens_needed)} SIRENs")
+    print(f"\n  Turnover API total: {len(turnover_map)}/{len(sirens_needed)} SIRENs "
+          f"({len(sirens_remaining)} will use employee band estimate)")
     return turnover_map
 
 
@@ -455,7 +505,7 @@ def load_dgfip_turnover(sirens_needed):
 def check_bodacc_filing(siren):
     """
     Query BODACC for a given SIREN.  Returns a dict with:
-      - has_recent_filing: bool (depot des comptes in last 3 years)
+      - has_recent_filing: bool (depot des comptes found)
       - last_filing_date: str or None
       - total_announcements: int
     """
@@ -514,7 +564,7 @@ def enrich_bodacc(df):
         result = check_bodacc_filing(siren)
         if result:
             bodacc_cache[siren] = result
-        time.sleep(0.5)  # polite rate limit
+        time.sleep(0.5)
 
     print(f"  [BODACC] Done. Got responses for {len(bodacc_cache)}/{n} SIRENs")
 
@@ -671,12 +721,12 @@ def main():
     )
 
     # =====================================================================
-    # PHASE 4 — Turnover enrichment (DGFiP annual accounts)
+    # PHASE 4 — Turnover enrichment (INPI -> Pappers -> band estimate)
     # =====================================================================
     unique_sirens = df["siren"].unique().tolist()
-    turnover_map = load_dgfip_turnover(unique_sirens)
+    turnover_map = load_turnover_data(unique_sirens)
 
-    # Apply DGFiP turnover
+    # Apply API-sourced turnover
     df["turnover_eur"] = df["siren"].apply(
         lambda s: turnover_map.get(s, {}).get("turnover_eur", None)
     )
@@ -687,7 +737,7 @@ def main():
         lambda s: turnover_map.get(s, {}).get("source", "")
     )
 
-    # Fallback: employee band estimate when DGFiP data is missing
+    # Format actual turnover; fill in band estimate as fallback
     df["turnover_display"] = df.apply(
         lambda row: format_turnover(row["turnover_eur"])
                     if pd.notna(row["turnover_eur"]) and row["turnover_eur"] > 0
@@ -723,34 +773,38 @@ def main():
         "bodacc_filing", "bodacc_last_date",
     ]]
 
-    # Rename for cleaner Excel headers
     df = df.rename(columns={
         "turnover_display": "turnover_actual",
-        "turnover_estimate": "turnover_est_range",
+        "turnover_est_range": "turnover_est_range",
     })
 
     output_file = "france_retailers.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Retailers")
 
-        # Metadata sheet
         meta_rows = [
             ("Notice", CONFIDENTIALITY_NOTICE),
             ("Generated", time.strftime("%Y-%m-%d %H:%M:%S")),
             ("Source — retailers", "INSEE SIRENE API v3"),
-            ("Source — turnover", "DGFiP comptes annuels (data.gouv.fr)"),
-            ("Source — filing status", "BODACC (bodacc-datadila.opendatasoft.com)"),
+            ("Source — turnover (primary)",
+             "INPI RNE API (data.inpi.fr) — actual chiffre d'affaires "
+             "from filed annual accounts, updated daily, covers FY 2017-present"),
+            ("Source — turnover (secondary)",
+             "Pappers API (pappers.fr) — aggregated INPI data, "
+             "100 free requests/month"),
+            ("Source — turnover (fallback)",
+             "Employee band estimate — SIRENE trancheEffectifs mapped "
+             "to CE-sector turnover ranges"),
+            ("Source — filing status",
+             "BODACC (bodacc-datadila.opendatasoft.com) — "
+             "official gazette, depot des comptes signal"),
             ("Size filter", f"trancheEffectifs >= {SIZE_MIN}"),
             ("APE codes queried", ", ".join(APE_CODES.keys())),
-            ("Classification method",
+            ("Classification",
              f"Chain = known chain name OR >= {CHAIN_SIREN_THRESHOLD} "
              f"establishments per SIREN; "
              f"Buying Group = known buying group name pattern; "
              f"Independent = all others"),
-            ("Turnover method",
-             "Primary: DGFiP annual accounts (actual CA). "
-             "Fallback: employee band proxy range (CE sector estimates). "
-             "BODACC filing = accounts deposit signal."),
         ]
         meta = pd.DataFrame(meta_rows, columns=["Field", "Value"])
         meta.to_excel(writer, index=False, sheet_name="Metadata")
@@ -771,14 +825,14 @@ def main():
     for rtype, count in df["retailer_type"].value_counts().items():
         print(f"  {rtype:15s}: {count:>5}")
 
-    n_actual = (df["turnover_actual"] != "").sum()
-    n_est = (df["turnover_est_range"] != "").sum()
+    n_actual = (df["turnover_display"] != "").sum()
+    n_est = (df["turnover_estimate"] != "").sum()
     n_bodacc = (df["bodacc_filing"] == "Yes").sum()
     print("\n--- Turnover enrichment ---")
-    print(f"  DGFiP actual CA : {n_actual:>5} SIRETs")
-    print(f"  Band estimate   : {n_est:>5} SIRETs (no DGFiP data)")
-    print(f"  No turnover info: {len(df) - n_actual - n_est:>5} SIRETs")
-    print(f"  BODACC filing   : {n_bodacc:>5} SIRENs with recent depot")
+    print(f"  Actual CA (INPI/Pappers): {n_actual:>5} SIRETs")
+    print(f"  Band estimate (fallback): {n_est:>5} SIRETs")
+    print(f"  No turnover info        : {len(df) - n_actual - n_est:>5} SIRETs")
+    print(f"  BODACC filing detected  : {n_bodacc:>5} SIRENs")
 
     print(f"\n  Total unique SIRETs : {len(df)}")
     print(f"  Total unique SIRENs : {df['siren'].nunique()}")
