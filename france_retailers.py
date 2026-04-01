@@ -330,7 +330,7 @@ FIELDS = [
     "etatAdministratifEtablissement",
 ]
 
-BASE_URL = "https://api.insee.fr/entreprises/sirene/V3/siret"
+BASE_URL = "https://api.insee.fr/api-sirene/3.11/siret"
 PAGE_SIZE = 1000
 
 # TEST MODE — set to True to fetch only 5 records per APE code (quick check)
@@ -633,29 +633,32 @@ def setup_sirene_auth():
     """
     global _sirene_headers
 
-    # Option A: direct API key (Simple app)
+    # Option A: direct API key (Simple or Machine-to-machine app key)
     if SIRENE_API_KEY:
-        # New portal may use X-Gravitee-Api-Key or Bearer — we send both
+        # The new portal uses X-INSEE-Api-Key-Integration header.
+        # We send multiple header variants to maximize compatibility.
         _sirene_headers = {
             "Accept": "application/json",
+            "X-INSEE-Api-Key-Integration": SIRENE_API_KEY,
             "X-Gravitee-Api-Key": SIRENE_API_KEY,
             "Authorization": f"Bearer {SIRENE_API_KEY}",
         }
-        print("  [INSEE] Using API key (Simple app)")
+        print("  [INSEE] Using API key directly")
         return True
 
-    # Option B: client_id + client_secret (Machine-to-machine app)
+    # Option B: client_id + client_secret → generate token
     if SIRENE_CLIENT_ID and SIRENE_CLIENT_SECRET:
         print("  [INSEE] Generating token from client_id + client_secret …")
         token = _try_token_generation()
         if token:
             _sirene_headers = {
                 "Accept": "application/json",
+                "X-INSEE-Api-Key-Integration": token,
                 "Authorization": f"Bearer {token}",
             }
             return True
         print("  [INSEE] Token generation failed on all endpoints.")
-        print("  [INSEE] Try creating a 'Simple' app instead — it gives a direct API key.")
+        print("  [INSEE] Try putting your client_secret as SIRENE_API_KEY instead.")
         return False
 
     return False
