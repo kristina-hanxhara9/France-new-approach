@@ -327,128 +327,246 @@ APE_DESCRIPTIONS = {
 }
 
 
-def build_overview_sheet():
-    """
-    Build a DataFrame with a non-technical overview of how the database works,
-    APE code descriptions, and methodology explanation.
-    """
-    overview_rows = [
-        # --- Section: What is this file ---
-        ("WHAT IS THIS FILE?", ""),
-        ("", "This Excel file contains a database of French retailers that sell "
-             "consumer electronics (CE), major/small domestic appliances (MDA/SDA), "
-             "mobile phones, photo equipment, accessories, and refurbished goods."),
-        ("", ""),
+def _write_styled_overview(wb):
+    """Write a styled overview sheet directly to the workbook using openpyxl."""
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
 
-        # --- Section: Where does the data come from ---
-        ("WHERE DOES THE DATA COME FROM?", ""),
-        ("", "All retailer data comes from official French government registries:"),
-        ("INSEE SIRENE", "The national registry of all French businesses. Every "
-         "company in France is registered here with a unique SIRET number, their "
-         "activity code (APE), address, and employee count. This is public data."),
-        ("INPI", "The national intellectual property institute also holds annual "
-         "accounts (turnover, profit) filed by companies. Free to access."),
-        ("BODACC", "The official gazette of commercial announcements. Tells us if "
-         "a company is actively filing accounts (a sign the business is alive)."),
-        ("", ""),
+    ws = wb.create_sheet("How This Works", 0)  # First sheet
+    ws.sheet_properties.tabColor = "4472C4"
 
-        # --- Section: How are retailers found ---
-        ("HOW ARE RETAILERS FOUND?", ""),
-        ("", "Every French business has an APE code — a 5-character code that "
-             "describes their main activity. It is the French equivalent of SIC "
-             "codes used in the UK/US or SNI codes used in Sweden."),
-        ("", "We search for specific APE codes that correspond to our retail "
-             "channels. For example, APE code 47.42Z = 'Retail sale of "
-             "telecommunications equipment' = our 'Mobile' channel."),
-        ("", "We then filter by: (1) active businesses only, (2) 10 or more "
-             "employees (to exclude tiny shops). We keep ALL results from "
-             "matching APE codes to maximise coverage."),
-        ("", "Additionally, we search SIRENE by name for known chains and "
-             "buying groups per channel (e.g., FNAC, DARTY for CE; EXPERT, "
-             "GITEM for MDA/SDA) to catch retailers that might use different "
-             "APE codes."),
-        ("", ""),
+    # Style definitions
+    title_font = Font(name="Calibri", size=18, bold=True, color="FFFFFF")
+    title_fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
+    section_font = Font(name="Calibri", size=13, bold=True, color="2F5496")
+    section_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
+    label_font = Font(name="Calibri", size=11, bold=True, color="333333")
+    body_font = Font(name="Calibri", size=11, color="333333")
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    green_font = Font(name="Calibri", size=11, bold=True, color="006100")
+    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    yellow_font = Font(name="Calibri", size=11, bold=True, color="9C6500")
+    table_header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    table_header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin", color="B4C6E7"),
+        right=Side(style="thin", color="B4C6E7"),
+        top=Side(style="thin", color="B4C6E7"),
+        bottom=Side(style="thin", color="B4C6E7"),
+    )
+    wrap = Alignment(wrap_text=True, vertical="top")
 
-        # --- Section: What does the confidence column mean ---
-        ("WHAT DOES THE CONFIDENCE COLUMN MEAN?", ""),
-        ("", "Each retailer is assigned a confidence level that indicates how "
-             "certain we are it belongs to that channel. The rows are colour-"
-             "coded in the Excel file for easy scanning."),
-        ("High (green rows)", "The company name contains channel-specific "
-             "keywords (e.g., 'PHOTO', 'CAMARA' for the Photo channel) OR "
-             "the company is a known chain/buying group for that channel. "
-             "These are very likely to be relevant retailers."),
-        ("Medium (yellow rows)", "The company has the right APE code and "
-             "enough employees, but the name does not match any channel "
-             "keyword. These are probably relevant (they registered under "
-             "the correct activity code) but may include some false positives "
-             "— worth a quick manual check."),
-        ("", "Tip: sort or filter by the 'confidence' column to see the "
-             "most relevant retailers first."),
-        ("", ""),
+    # Column widths
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 85
+    ws.column_dimensions["C"].width = 30
 
-        # --- Section: What the channels mean ---
-        ("WHAT DO THE CHANNELS MEAN?", ""),
-        ("Photo", "Specialist photography equipment retailers."),
-        ("CE", "Consumer electronics — TVs, audio, computers, peripherals."),
-        ("MDA/SDA", "Major domestic appliances (washing machines, fridges) and "
-         "small domestic appliances (kettles, toasters, coffee machines)."),
-        ("Mobile", "Mobile phone specialist retailers."),
-        ("Accessories", "Phone cases, cables, chargers, screen protectors, etc."),
-        ("Refurb", "Refurbished/repaired electronics and devices."),
-        ("", ""),
+    row = 1
 
-        # --- Section: Chain vs Independent vs Buying Group ---
-        ("HOW IS RETAILER TYPE DETERMINED?", ""),
-        ("Chain", "The company name matches a known chain (FNAC, DARTY, "
-         "BOULANGER, etc.) OR the same parent company has 3+ stores in our "
-         "database. This is our own classification, not from any government "
-         "database."),
-        ("Buying Group", "The company name matches a known French buying group "
-         "(EXPERT, EURONICS, GITEM, etc.). These are independent shops that "
-         "group together to negotiate better purchasing terms with suppliers."),
-        ("Independent", "Everything else — single-location shops that don't "
-         "belong to a known chain or buying group."),
-        ("", ""),
+    def _title(text):
+        nonlocal row
+        ws.merge_cells(f"A{row}:C{row}")
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = title_font
+        c.fill = title_fill
+        c.alignment = Alignment(vertical="center")
+        ws.row_dimensions[row].height = 36
+        row += 1
 
-        # --- Section: Turnover data ---
-        ("WHERE DOES TURNOVER DATA COME FROM?", ""),
-        ("turnover_actual", "Real filed turnover (chiffre d'affaires) from INPI "
-         "annual accounts. This is what the company declared to the tax "
-         "authority. Not available for all companies — some file as "
-         "confidential, some are too small to file."),
-        ("turnover_est_range", "When we have no real figure, we estimate a rough "
-         "range based on the number of employees. For example, a CE retailer "
-         "with 10-19 employees typically does €1M-€5M in turnover. These are "
-         "rough estimates, not real figures."),
-        ("", ""),
+    def _section(text):
+        nonlocal row
+        row += 1  # blank spacer row
+        ws.merge_cells(f"A{row}:C{row}")
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = section_font
+        c.fill = section_fill
+        c.alignment = Alignment(vertical="center")
+        ws.row_dimensions[row].height = 28
+        row += 1
 
-        # --- Section: Online & Omni sheet ---
-        ("WHAT IS THE 'ONLINE & OMNI RETAIL' SHEET?", ""),
-        ("", "Major e-commerce and hypermarket retailers that sell CE/MDA/Mobile "
-             "but don't show up in our APE code searches because they register "
-             "under generic codes like 'e-commerce' or 'hypermarket'. We added "
-             "them manually based on market knowledge. Examples: Amazon, "
-             "Cdiscount, Carrefour (online)."),
-        ("", ""),
+    def _row(label, desc, label_style=None, fill=None):
+        nonlocal row
+        c1 = ws.cell(row=row, column=1, value=label)
+        c2 = ws.cell(row=row, column=2, value=desc)
+        c1.font = label_style or label_font
+        c2.font = body_font
+        c1.alignment = wrap
+        c2.alignment = wrap
+        if fill:
+            c1.fill = fill
+            c2.fill = fill
+        row += 1
 
-        # --- Section: Limitations ---
-        ("WHAT ARE THE LIMITATIONS?", ""),
-        ("APE codes can be wrong", "Companies self-declare their APE code when "
-         "they register and rarely update it. INSEE estimates ~15-20%% of codes "
-         "are inaccurate."),
-        ("We miss hypermarkets", "Carrefour, Auchan, Leclerc sell massive "
-         "volumes of electronics but register as 'hypermarket' (47.11F), not "
-         "under electronics-specific codes."),
-        ("We miss e-commerce", "Amazon, Cdiscount, etc. register as 'distance "
-         "selling' (47.91B). The Online & Omni sheet covers the major ones."),
-        ("Size filter", "We exclude businesses with fewer than 10 employees. "
-         "Some real shops in rural areas are smaller than this."),
-        ("Turnover coverage", "Not all companies have filed public accounts. "
-         "Coverage is better for larger companies (SA, SAS, SARL)."),
-    ]
+    def _table(headers, rows_data):
+        nonlocal row
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=row, column=ci, value=h)
+            c.font = table_header_font
+            c.fill = table_header_fill
+            c.border = thin_border
+            c.alignment = Alignment(horizontal="center")
+        row += 1
+        for ri, data_row in enumerate(rows_data):
+            stripe = PatternFill(start_color="EBF1FA", end_color="EBF1FA",
+                                 fill_type="solid") if ri % 2 == 0 else None
+            for ci, val in enumerate(data_row, 1):
+                c = ws.cell(row=row, column=ci, value=val)
+                c.font = body_font
+                c.border = thin_border
+                c.alignment = wrap
+                if stripe:
+                    c.fill = stripe
+            row += 1
 
-    return pd.DataFrame(overview_rows, columns=["Topic", "Description"])
+    # ----------------------------------------------------------------
+    # Content
+    # ----------------------------------------------------------------
+    _title("French Retailer Database — Overview & Methodology")
+
+    _section("What is this file?")
+    _row("", "This Excel file contains a database of French retailers across 6 channels: "
+         "Photo, CE (consumer electronics), MDA/SDA (appliances), Mobile, Accessories, "
+         "and Refurb (refurbished/repair). Data comes from official French government registries.")
+
+    _section("Data Sources")
+    _table(
+        ["Source", "What it provides", "Access"],
+        [
+            ["INSEE SIRENE", "National business registry: SIRET, company name, trade name, "
+             "APE activity code, address, employee count, legal form, HQ flag, creation date",
+             "Free API (portail-api.insee.fr)"],
+            ["INPI RNE", "Annual accounts: real turnover (chiffre d'affaires), "
+             "filed by companies. Updated daily, FY 2017-present.",
+             "Free API (data.inpi.fr)"],
+            ["BODACC", "Official commercial gazette: filing activity signals "
+             "(depot des comptes = business is alive and filing).",
+             "Free, no auth needed"],
+        ],
+    )
+
+    _section("How retailers are discovered")
+    _row("Step 1", "Search the SIRENE registry by APE activity codes mapped to each channel (see table below).")
+    _row("Step 2", "Keep only active businesses with 10+ employees.")
+    _row("Step 3", "Search SIRENE by name for known chains and buying groups per channel "
+         "(e.g., FNAC, DARTY for CE) to catch retailers registered under different APE codes.")
+    _row("Step 4", "Assign a confidence level based on keyword matching (see below).")
+    _row("Step 5", "Enrich with turnover from INPI and filing status from BODACC.")
+
+    _section("APE Codes by Channel")
+    _table(
+        ["Channel", "APE Code", "Description"],
+        [
+            ["Photo", "47.78C", "Other specialised retail (photo, optical, precision)"],
+            ["CE", "47.43Z", "Audio and video equipment in specialised stores"],
+            ["CE", "47.41Z", "Computers, peripherals, and software in specialised stores"],
+            ["MDA/SDA", "47.54Z", "Electrical household appliances in specialised stores"],
+            ["Mobile", "47.42Z", "Telecommunications equipment in specialised stores"],
+            ["Accessories", "47.59B", "Other specialised retail not elsewhere classified"],
+            ["Refurb", "95.11Z", "Repair of computers and peripheral equipment"],
+            ["Refurb", "95.12Z", "Repair of communication equipment"],
+        ],
+    )
+
+    _section("Confidence Column (colour-coded rows)")
+    _row("High", "Company name matches channel-specific keywords (e.g., PHOTO, CAMARA, "
+         "NIKON for Photo) OR is a known chain/buying group. Very likely relevant.",
+         green_font, green_fill)
+    _row("Medium", "Correct APE code and 10+ employees, but name does not contain channel "
+         "keywords. Probably relevant — registered under the right activity — but may include "
+         "some false positives. Worth a quick manual check.",
+         yellow_font, yellow_fill)
+    _row("", "Tip: sort or filter by the 'confidence' column to prioritise your review.")
+
+    _section("Channel Definitions")
+    _table(
+        ["Channel", "Description", "Examples"],
+        [
+            ["Photo", "Specialist photography equipment", "Phox, Camara, photo labs"],
+            ["CE", "Consumer electronics: TVs, audio, computers, peripherals",
+             "Fnac, Darty, Boulanger, LDLC"],
+            ["MDA/SDA", "Major appliances (washing machines, fridges) and small appliances "
+             "(kettles, coffee machines)", "Darty, Boulanger, But, Conforama"],
+            ["Mobile", "Mobile phone specialist retailers and operator stores",
+             "Orange, SFR, Bouygues, Apple"],
+            ["Accessories", "Phone cases, cables, chargers, screen protectors",
+             "Lick, Fnac accessories"],
+            ["Refurb", "Refurbished, repaired, and second-hand electronics",
+             "Back Market, Cash Converters, Easy Cash"],
+        ],
+    )
+
+    _section("Retailer Type Classification")
+    _table(
+        ["Type", "How determined", "Examples"],
+        [
+            ["Chain", "Name matches a known chain pattern OR the same parent SIREN "
+             "has 3+ establishments in our data", "FNAC, DARTY, BOULANGER, ORANGE, SFR"],
+            ["Buying Group", "Name matches a known French buying group. These are "
+             "independent shops that group together for purchasing power.",
+             "EXPERT, EURONICS, GITEM, PULSAT, PRO&CIE"],
+            ["Independent", "Default: no chain or buying group pattern, and SIREN "
+             "has fewer than 3 establishments.", "Single-location shops"],
+        ],
+    )
+
+    _section("Column Reference")
+    _table(
+        ["Column", "Description"],
+        [
+            ["siret", "14-digit unique establishment identifier (SIREN + NIC)"],
+            ["siren", "9-digit parent company identifier"],
+            ["nic", "5-digit establishment number within the parent SIREN"],
+            ["legal_name", "Official registered company name (denominationUniteLegale)"],
+            ["trade_name", "Brand/trade name shown on the shop (enseigne)"],
+            ["is_hq", "Whether this establishment is the company headquarters (siege)"],
+            ["channel", "Which product channel(s) this retailer belongs to"],
+            ["confidence", "How certain this retailer belongs to the channel (High/Medium)"],
+            ["retailer_type", "Chain, Buying Group, or Independent"],
+            ["ape_code", "APE activity code for this establishment"],
+            ["ape_code_company", "APE activity code at the parent company level"],
+            ["size_band", "Employee count band for this establishment"],
+            ["size_band_company", "Employee count band for the entire company"],
+            ["company_category", "PME (small/medium), ETI (mid-cap), or GE (large enterprise)"],
+            ["legal_form_code", "Legal form code (e.g., 5710=SAS, 5499=SARL, 1000=Sole trader)"],
+            ["is_employer", "Whether the establishment is an employer (O=Yes, N=No)"],
+            ["date_created_estab", "Establishment creation date"],
+            ["date_created_company", "Parent company creation date"],
+            ["turnover_actual", "Real filed turnover from INPI annual accounts"],
+            ["turnover_est_range", "Estimated turnover range based on employee count (fallback)"],
+            ["turnover_year", "Fiscal year of the turnover figure"],
+            ["turnover_source", "Where the turnover data comes from"],
+            ["bodacc_filing", "Latest BODACC filing type (depot des comptes = healthy signal)"],
+            ["bodacc_last_date", "Date of the latest BODACC filing"],
+        ],
+    )
+
+    _section("Turnover Data")
+    _row("turnover_actual", "Real chiffre d'affaires from INPI annual accounts. "
+         "This is what the company declared. Not available for all — some file as "
+         "confidential, some are too small to file.")
+    _row("turnover_est_range", "Rough estimate based on employee count when no real "
+         "figure is available. E.g., 10-19 employees ~ €1M-€5M. Directional only.")
+
+    _section("Online & Omni Retail Sheet")
+    _row("", "Major e-commerce and hypermarket retailers that sell CE/MDA/Mobile but "
+         "register under generic APE codes ('e-commerce' or 'hypermarket'). Manually "
+         "curated. Examples: Amazon, Cdiscount, Rue du Commerce, Rakuten.")
+
+    _section("Limitations & Accuracy")
+    _table(
+        ["Limitation", "Impact"],
+        [
+            ["APE codes can be wrong", "Companies self-declare and rarely update. "
+             "INSEE estimates ~15-20% are inaccurate."],
+            ["Hypermarkets are missing", "Carrefour, Auchan, Leclerc sell huge volumes "
+             "of electronics but register as 'hypermarket' (47.11F). See Online & Omni sheet."],
+            ["E-commerce is missing", "Amazon, Cdiscount register as 'distance selling' "
+             "(47.91B). See Online & Omni sheet."],
+            ["Size filter", "We exclude < 10 employees. Some real rural shops are smaller."],
+            ["Turnover coverage", "Not all companies file public accounts. "
+             "Better coverage for larger companies (SA, SAS, SARL)."],
+        ],
+    )
 
 
 def build_ape_reference_sheet():
@@ -753,7 +871,71 @@ def _flatten_record(rec):
     return flat
 
 
-def _get_field(rec, field):
+def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type=""):
+    """Extract all useful fields from a flattened SIRENE record into a row dict."""
+    ul = rec.get("uniteLegale") or {}
+    siret = rec.get("siret", "")
+    siren = siret[:9] if len(siret) >= 9 else rec.get("siren", "")
+
+    # Legal name — try multiple fields
+    legal_name = (
+        rec.get("denominationUniteLegale")
+        or ul.get("denominationUniteLegale", "")
+    )
+    # Trade/brand name (enseigne)
+    trade_name = (
+        rec.get("enseigne1Etablissement")
+        or rec.get("enseigne2Etablissement")
+        or rec.get("enseigne3Etablissement")
+        or rec.get("denominationUsuelleEtablissement")
+        or ul.get("denominationUsuelle1UniteLegale")
+        or ""
+    )
+    # Legal form
+    cat_juridique = rec.get("categorieJuridiqueUniteLegale") or ul.get("categorieJuridiqueUniteLegale", "")
+    # Company category (PME, ETI, GE)
+    cat_entreprise = rec.get("categorieEntreprise") or ul.get("categorieEntreprise", "")
+    # Is HQ?
+    is_siege = rec.get("etablissementSiege") or ""
+    # Creation dates
+    date_creation_etab = rec.get("dateCreationEtablissement", "")
+    date_creation_ul = rec.get("dateCreationUniteLegale") or ul.get("dateCreationUniteLegale", "")
+    # Employee bands — establishment and unit level
+    size_band_etab = rec.get("trancheEffectifsEtablissement", "")
+    size_band_ul = rec.get("trancheEffectifsUniteLegale") or ul.get("trancheEffectifsUniteLegale", "")
+    # APE at unit level (may differ from establishment)
+    ape_ul = rec.get("activitePrincipaleUniteLegale") or ul.get("activitePrincipaleUniteLegale", "")
+    # Employer flag
+    is_employer = rec.get("caractereEmployeurEtablissement", "")
+    # SSE (social & solidarity economy)
+    sse = rec.get("economieSocialeSolidaireUniteLegale") or ul.get("economieSocialeSolidaireUniteLegale", "")
+    # NIC (establishment number within SIREN)
+    nic = rec.get("nic", "")
+
+    return {
+        "siret": siret,
+        "siren": siren,
+        "nic": nic,
+        "legal_name": legal_name,
+        "trade_name": trade_name,
+        "is_hq": "Yes" if is_siege in (True, "true", "True") else ("No" if is_siege in (False, "false", "False") else ""),
+        "channel": channel,
+        "ape_code": ape_code or rec.get("activitePrincipaleEtablissement", ""),
+        "ape_code_company": ape_ul,
+        "address": build_address(rec),
+        "postcode": _get_field(rec, "codePostalEtablissement"),
+        "city": _get_field(rec, "libelleCommuneEtablissement"),
+        "size_band": size_band_etab,
+        "size_band_company": size_band_ul,
+        "company_category": cat_entreprise,
+        "legal_form_code": cat_juridique,
+        "is_employer": is_employer,
+        "date_created_estab": date_creation_etab,
+        "date_created_company": date_creation_ul,
+        "retailer_type": retailer_type,
+        "confidence": confidence,
+    }
+
     """Get a field that may be at top level or nested under adresseEtablissement."""
     val = rec.get(field)
     if val:
@@ -1270,11 +1452,20 @@ def enrich_omni_retailers():
                 data = resp.json()
                 etabs = data.get("etablissements", [])
                 if etabs:
-                    rec = etabs[0]
+                    rec = _flatten_record(etabs[0])
                     row["siret"] = rec.get("siret", "")
                     row["ape_code"] = rec.get("activitePrincipaleEtablissement", "")
                     row["size_band"] = rec.get("trancheEffectifsEtablissement", "")
+                    row["size_band_company"] = rec.get("trancheEffectifsUniteLegale", "")
+                    row["company_category"] = rec.get("categorieEntreprise", "")
+                    row["legal_form_code"] = rec.get("categorieJuridiqueUniteLegale", "")
+                    row["trade_name"] = (
+                        rec.get("enseigne1Etablissement")
+                        or rec.get("denominationUsuelleEtablissement")
+                        or ""
+                    )
                     row["status"] = rec.get("etatAdministratifEtablissement", "")
+                    row["date_created"] = rec.get("dateCreationEtablissement", "")
                     row["address"] = build_address(rec)
                     row["postcode"] = _get_field(rec, "codePostalEtablissement")
                     row["city"] = _get_field(rec, "libelleCommuneEtablissement")
@@ -1394,28 +1585,15 @@ def main():
         # NO keyword filtering — keep all. Confidence is assigned instead.
         for rec in sized:
             ul = rec.get("uniteLegale") or {}
-            siret = rec.get("siret", "")
             name = (
                 rec.get("denominationUniteLegale")
                 or ul.get("denominationUniteLegale", "")
             )
-            # Determine confidence level
             has_keyword = matches_keyword(name, channel=channel)
             confidence = "High" if has_keyword else "Medium"
 
-            row = {
-                "siret": siret,
-                "siren": siret[:9] if len(siret) >= 9 else "",
-                "legal_name": name,
-                "channel": channel,
-                "ape_code": ape_code,
-                "address": build_address(rec),
-                "postcode": _get_field(rec, "codePostalEtablissement"),
-                "city": _get_field(rec, "libelleCommuneEtablissement"),
-                "size_band": rec.get("trancheEffectifsEtablissement", ""),
-                "retailer_type": "",  # filled in phase 2
-                "confidence": confidence,
-            }
+            row = _extract_row(rec, channel, ape_code, confidence)
+            siret = row["siret"]
             seen_sirets.add(siret)
             all_rows.append(row)
 
@@ -1451,23 +1629,7 @@ def main():
                         if not existing["retailer_type"]:
                             existing["retailer_type"] = rtype
                 continue
-            ul = rec.get("uniteLegale") or {}
-            row = {
-                "siret": siret,
-                "siren": siret[:9] if len(siret) >= 9 else "",
-                "legal_name": (
-                    rec.get("denominationUniteLegale")
-                    or ul.get("denominationUniteLegale", "")
-                ),
-                "channel": channel,
-                "ape_code": rec.get("activitePrincipaleEtablissement", ""),
-                "address": build_address(rec),
-                "postcode": _get_field(rec, "codePostalEtablissement"),
-                "city": _get_field(rec, "libelleCommuneEtablissement"),
-                "size_band": rec.get("trancheEffectifsEtablissement", ""),
-                "retailer_type": rtype,  # pre-classified
-                "confidence": "High",  # known retailer = always high
-            }
+            row = _extract_row(rec, channel, "", "High", rtype)
             seen_sirets.add(siret)
             all_rows.append(row)
             added += 1
@@ -1567,9 +1729,14 @@ def main():
     # PHASE 7 — Output (per-channel sheets + All + Online/Omni + Metadata)
     # =====================================================================
     output_cols = [
-        "siret", "siren", "legal_name", "channel", "confidence",
-        "retailer_type",
-        "ape_code", "address", "postcode", "city", "size_band",
+        "siret", "siren", "nic",
+        "legal_name", "trade_name", "is_hq",
+        "channel", "confidence", "retailer_type",
+        "ape_code", "ape_code_company",
+        "address", "postcode", "city",
+        "size_band", "size_band_company", "company_category",
+        "legal_form_code", "is_employer",
+        "date_created_estab", "date_created_company",
         "turnover_actual", "turnover_est_range", "turnover_year",
         "turnover_source",
         "bodacc_filing", "bodacc_last_date",
@@ -1579,9 +1746,10 @@ def main():
         "turnover_display": "turnover_actual",
         "turnover_estimate": "turnover_est_range",
     })
-    # Ensure confidence column exists even after collapse
-    if "confidence" not in df.columns:
-        df["confidence"] = "Medium"
+    # Ensure all columns exist
+    for col in output_cols:
+        if col not in df.columns:
+            df[col] = ""
     df = df[output_cols]
 
     # Sort: High confidence first within each channel
@@ -1611,10 +1779,6 @@ def main():
 
         # Online & omni-channel retailers (static list + SIRENE enrichment)
         omni_df.to_excel(writer, index=False, sheet_name="Online & Omni Retail")
-
-        # Overview sheet (non-technical explanation)
-        overview_df = build_overview_sheet()
-        overview_df.to_excel(writer, index=False, sheet_name="How This Works")
 
         # APE code reference sheet (FR / EN / SV descriptions)
         ape_ref_df = build_ape_reference_sheet()
@@ -1666,17 +1830,22 @@ def main():
         meta.to_excel(writer, index=False, sheet_name="Metadata")
 
     # -----------------------------------------------------------------
-    # Apply conditional formatting (green = High, yellow = Medium)
+    # Add styled overview sheet & conditional formatting
     # -----------------------------------------------------------------
     from openpyxl import load_workbook
     from openpyxl.styles import PatternFill, Font
 
+    wb = load_workbook(output_file)
+
+    # Styled overview sheet
+    _write_styled_overview(wb)
+
+    # Conditional formatting: green = High, yellow = Medium
     green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     green_font = Font(color="006100")
     yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
     yellow_font = Font(color="9C6500")
 
-    wb = load_workbook(output_file)
     conf_idx = output_cols.index("confidence")  # 0-based position in output_cols
 
     sheets_to_format = list(channel_dfs.keys()) + ["All Retailers"]
