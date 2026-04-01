@@ -66,11 +66,22 @@ DATA_NOTICE = (
 # ---------------------------------------------------------------------------
 
 # INSEE SIRENE — get your API key from https://portail-api.insee.fr
-# 1. Create an account on portail-api.insee.fr
-# 2. Subscribe to the API Sirene
-# 3. Copy your API key from your application page
-# That's it — no token generation needed. The key is used directly.
+#
+# Option A (recommended): Create a "Simple" application
+#   → gives you one API key. Paste it as SIRENE_API_KEY below.
+#
+# Option B: Create a "Machine-to-machine" application
+#   → gives you client_id + client_secret. Paste both below.
+#   The script will auto-generate a Bearer token from them.
+#
+# Steps:
+#   1. Create an account on portail-api.insee.fr
+#   2. Create an application (Simple is easiest)
+#   3. Subscribe to the API Sirene
+#   4. Copy the key(s) into your .env file
 SIRENE_API_KEY = os.environ.get("SIRENE_API_KEY", "")
+SIRENE_CLIENT_ID = os.environ.get("SIRENE_CLIENT_ID", "")
+SIRENE_CLIENT_SECRET = os.environ.get("SIRENE_CLIENT_SECRET", "")
 
 # INPI — optional, for actual turnover data
 INPI_USERNAME = os.environ.get("INPI_USERNAME", "")
@@ -582,9 +593,77 @@ def classify_retailer_type(name_upper, siren, siren_counts):
     return "Independent"
 
 
+# Resolved auth headers — set by setup_sirene_auth() at startup
+_sirene_headers = {}
+
+
+def _try_token_generation():
+    """
+    Try to get a Bearer token from client_id + client_secret.
+    The new portal (portail-api.insee.fr) may use different token endpoints.
+    We try several known patterns.
+    """
+    token_urls = [
+        "https://auth.insee.net/auth/realms/apim-gravitee/protocol/openid-connect/token",
+        "https://portail-api.insee.fr/token",
+        "https://api.insee.fr/token",
+    ]
+    for url in token_urls:
+        try:
+            resp = http.post(
+                url,
+                data={"grant_type": "client_credentials"},
+                auth=(SIRENE_CLIENT_ID, SIRENE_CLIENT_SECRET),
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                token = resp.json().get("access_token")
+                if token:
+                    print(f"  [INSEE] Token generated via {url}")
+                    return token
+        except Exception:
+            continue
+    return None
+
+
+def setup_sirene_auth():
+    """
+    Figure out which auth method to use and build headers.
+    Returns True if auth is ready, False if no credentials found.
+    """
+    global _sirene_headers
+
+    # Option A: direct API key (Simple app)
+    if SIRENE_API_KEY:
+        # New portal may use X-Gravitee-Api-Key or Bearer — we send both
+        _sirene_headers = {
+            "Accept": "application/json",
+            "X-Gravitee-Api-Key": SIRENE_API_KEY,
+            "Authorization": f"Bearer {SIRENE_API_KEY}",
+        }
+        print("  [INSEE] Using API key (Simple app)")
+        return True
+
+    # Option B: client_id + client_secret (Machine-to-machine app)
+    if SIRENE_CLIENT_ID and SIRENE_CLIENT_SECRET:
+        print("  [INSEE] Generating token from client_id + client_secret …")
+        token = _try_token_generation()
+        if token:
+            _sirene_headers = {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
+            }
+            return True
+        print("  [INSEE] Token generation failed on all endpoints.")
+        print("  [INSEE] Try creating a 'Simple' app instead — it gives a direct API key.")
+        return False
+
+    return False
+
+
 def fetch_all_for_code(ape_code):
     """Paginate through SIRENE API for a single APE code. Returns (records, total)."""
-    headers = {"Authorization": f"Bearer {SIRENE_API_KEY}", "Accept": "application/json"}
+    headers = _sirene_headers
     page_size = TEST_LIMIT if TEST_MODE else PAGE_SIZE
     params_base = {
         "q": (
@@ -884,7 +963,7 @@ def enrich_omni_retailers():
         print("\n--- Online & omni-channel retailers (static only, TEST MODE) ---")
     else:
         print("\n--- Enriching online & omni-channel retailers via SIRENE ---")
-    headers = {"Authorization": f"Bearer {SIRENE_API_KEY}", "Accept": "application/json"}
+    headers = _sirene_headers
     rows = []
 
     for entry in MAJOR_ONLINE_OMNI_RETAILERS:
@@ -979,15 +1058,23 @@ def format_turnover(value):
 
 
 def main():
-    if not SIRENE_API_KEY:
-        print("ERROR: Set SIRENE_API_KEY in your .env file.")
+    has_any_creds = SIRENE_API_KEY or (SIRENE_CLIENT_ID and SIRENE_CLIENT_SECRET)
+    if not has_any_creds:
+        print("ERROR: No INSEE credentials found in your .env file.")
         print()
-        print("  How to get it:")
-        print("  1. Go to https://portail-api.insee.fr")
-        print("  2. Create an account (free)")
-        print("  3. Subscribe to the API Sirene")
-        print("  4. Copy the API key from your application page")
-        print("  5. Paste it in your .env file as: SIRENE_API_KEY=your_key_here")
+        print("  Option A (easiest) — Simple app:")
+        print("    1. Go to https://portail-api.insee.fr")
+        print("    2. Create an account (free)")
+        print("    3. Create a 'Simple' application")
+        print("    4. Subscribe to the API Sirene")
+        print("    5. Copy the API key → paste in .env as:")
+        print("       SIRENE_API_KEY=your_key_here")
+        print()
+        print("  Option B — Machine-to-machine app:")
+        print("    Same steps but create a 'Machine-to-machine' app.")
+        print("    Paste both values in .env:")
+        print("       SIRENE_CLIENT_ID=your_client_id")
+        print("       SIRENE_CLIENT_SECRET=your_client_secret")
         return
 
     # Check SSL before any API calls
@@ -999,6 +1086,12 @@ def main():
         print(f"\n  *** TEST MODE: fetching {TEST_LIMIT} records per APE code ***")
         print(f"  *** BODACC and INPI turnover lookups skipped ***")
     print(f"{'='*60}\n")
+
+    # Set up SIRENE authentication
+    if not setup_sirene_auth():
+        print("ERROR: Could not authenticate with INSEE.")
+        print("       Try creating a 'Simple' app at https://portail-api.insee.fr")
+        return
 
     # =====================================================================
     # PHASE 1 — Fetch & filter from SIRENE
