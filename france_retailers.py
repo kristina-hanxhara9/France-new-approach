@@ -562,6 +562,41 @@ def matches_keyword(name):
     return any(kw in upper for kw in KEYWORDS)
 
 
+def _flatten_record(rec):
+    """Flatten a v3.11 SIRENE record so historized fields are at top level.
+
+    The API nests historized fields (APE, status, trancheEffectifs, address)
+    under periodesEtablissement and adresseEtablissement.  This promotes the
+    most-recent period's values and address sub-fields to the top level so
+    the rest of the code can access them uniformly.
+    """
+    flat = dict(rec)
+    # Promote latest period fields
+    periodes = rec.get("periodesEtablissement") or []
+    if periodes:
+        latest = periodes[0]
+        for key in ("activitePrincipaleEtablissement",
+                     "etatAdministratifEtablissement",
+                     "trancheEffectifsEtablissement"):
+            if key not in flat or not flat[key]:
+                flat[key] = latest.get(key, "")
+    # Promote uniteLegale fields
+    ul = rec.get("uniteLegale") or {}
+    if ul:
+        for key in ("denominationUniteLegale", "trancheEffectifsUniteLegale"):
+            if key not in flat or not flat[key]:
+                flat[key] = ul.get(key, "")
+    # Promote address sub-fields
+    addr2 = rec.get("adresse2Etablissement") or {}
+    addr = rec.get("adresseEtablissement") or {}
+    for src in (addr, addr2):
+        if isinstance(src, dict):
+            for key, val in src.items():
+                if key not in flat or not flat[key]:
+                    flat[key] = val
+    return flat
+
+
 def _get_field(rec, field):
     """Get a field that may be at top level or nested under adresseEtablissement."""
     val = rec.get(field)
@@ -684,20 +719,21 @@ def fetch_all_for_code(ape_code):
     """Paginate through SIRENE API for a single APE code. Returns (records, total)."""
     headers = _sirene_headers
     page_size = TEST_LIMIT if TEST_MODE else PAGE_SIZE
+    # v3.11: historized fields must be wrapped in periode()
     params_base = {
         "q": (
-            f"activitePrincipaleEtablissement:{ape_code} "
-            f"AND etatAdministratifEtablissement:A"
+            f"periode(activitePrincipaleEtablissement:{ape_code} "
+            f"AND etatAdministratifEtablissement:A)"
         ),
         "nombre": page_size,
     }
 
     records = []
-    debut = 0
+    curseur = "*"
     total = None
 
     while True:
-        params = {**params_base, "debut": debut}
+        params = {**params_base, "curseur": curseur}
         time.sleep(2)  # 30 req/min limit on new portal
         resp = http.get(BASE_URL, headers=headers, params=params, timeout=30)
 
@@ -725,8 +761,13 @@ def fetch_all_for_code(ape_code):
         if TEST_MODE:
             break
 
-        debut += PAGE_SIZE
-        if debut >= total:
+        # Use cursor for next page
+        curseur_suivant = header.get("curseurSuivant")
+        if not curseur_suivant:
+            break
+        curseur = curseur_suivant
+
+        if len(records) >= total:
             break
 
     return records, total
@@ -1010,7 +1051,7 @@ def enrich_omni_retailers():
         try:
             time.sleep(2)  # 30 req/min limit on new portal
             params = {
-                "q": f"siren:{siren} AND etatAdministratifEtablissement:A",
+                "q": f"siren:{siren} AND periode(etatAdministratifEtablissement:A)",
                 "nombre": 1,
             }
             resp = http.get(BASE_URL, headers=headers, params=params, timeout=15)
@@ -1118,6 +1159,9 @@ def main():
         if not records:
             print(f"  No records returned for {ape_code}.")
             continue
+
+        # Flatten nested v3.11 response structure
+        records = [_flatten_record(r) for r in records]
 
         # Filter 1 — active establishments
         active = [
