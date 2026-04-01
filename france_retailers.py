@@ -6,12 +6,10 @@ data from INPI / Pappers annual accounts + BODACC filing status.
 
 Set BEARER_TOKEN below and run: python france_retailers.py
 
-CONFIDENTIAL — INTERNAL USE ONLY
-This script and its output contain proprietary market intelligence data.
-Do not distribute, share, or publish results without explicit authorization.
-All data sourced from public registries (INSEE, INPI, BODACC) but the
-filtering logic, channel mappings, and classification methodology are
-proprietary.
+Note: All source data comes from public French government registries
+(INSEE SIRENE, INPI, BODACC). The channel mappings, retailer classification
+logic, and curated lists in this script are original work — please credit
+or check before sharing externally.
 """
 
 import os
@@ -33,13 +31,12 @@ if _env_path.exists():
         os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 # ---------------------------------------------------------------------------
-# CONFIDENTIALITY
+# NOTICE
 # ---------------------------------------------------------------------------
 
-CONFIDENTIALITY_NOTICE = (
-    "CONFIDENTIAL — INTERNAL USE ONLY. "
-    "This file contains proprietary market intelligence. "
-    "Do not distribute without authorization."
+DATA_NOTICE = (
+    "Source data: public French registries (INSEE, INPI, BODACC). "
+    "Channel mappings and classification logic are original work."
 )
 
 # ---------------------------------------------------------------------------
@@ -725,7 +722,7 @@ def main():
         return
 
     print(f"\n{'='*60}")
-    print(CONFIDENTIALITY_NOTICE)
+    print(DATA_NOTICE)
     print(f"{'='*60}\n")
 
     # =====================================================================
@@ -928,7 +925,7 @@ def main():
 
         # Metadata sheet
         meta_rows = [
-            ("Notice", CONFIDENTIALITY_NOTICE),
+            ("Notice", DATA_NOTICE),
             ("Generated", time.strftime("%Y-%m-%d %H:%M:%S")),
             ("Source — retailers",
              "INSEE SIRENE API v3 — national business registry"),
@@ -971,7 +968,7 @@ def main():
 
     # ----- Summary -----
     print(f"\n{'='*60}")
-    print(CONFIDENTIALITY_NOTICE)
+    print(DATA_NOTICE)
     print(f"{'='*60}")
 
     print("\n--- Channel breakdown (per sheet) ---")
