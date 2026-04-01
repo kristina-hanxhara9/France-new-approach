@@ -361,13 +361,30 @@ def build_overview_sheet():
              "channels. For example, APE code 47.42Z = 'Retail sale of "
              "telecommunications equipment' = our 'Mobile' channel."),
         ("", "We then filter by: (1) active businesses only, (2) 10 or more "
-             "employees (to exclude tiny shops), and (3) channel-specific "
-             "keywords in the company name (e.g., Photo channel looks for "
-             "PHOTO, PHOX, CAMARA, NIKON, etc.)."),
+             "employees (to exclude tiny shops). We keep ALL results from "
+             "matching APE codes to maximise coverage."),
         ("", "Additionally, we search SIRENE by name for known chains and "
              "buying groups per channel (e.g., FNAC, DARTY for CE; EXPERT, "
              "GITEM for MDA/SDA) to catch retailers that might use different "
              "APE codes."),
+        ("", ""),
+
+        # --- Section: What does the confidence column mean ---
+        ("WHAT DOES THE CONFIDENCE COLUMN MEAN?", ""),
+        ("", "Each retailer is assigned a confidence level that indicates how "
+             "certain we are it belongs to that channel. The rows are colour-"
+             "coded in the Excel file for easy scanning."),
+        ("High (green rows)", "The company name contains channel-specific "
+             "keywords (e.g., 'PHOTO', 'CAMARA' for the Photo channel) OR "
+             "the company is a known chain/buying group for that channel. "
+             "These are very likely to be relevant retailers."),
+        ("Medium (yellow rows)", "The company has the right APE code and "
+             "enough employees, but the name does not match any channel "
+             "keyword. These are probably relevant (they registered under "
+             "the correct activity code) but may include some false positives "
+             "— worth a quick manual check."),
+        ("", "Tip: sort or filter by the 'confidence' column to see the "
+             "most relevant retailers first."),
         ("", ""),
 
         # --- Section: What the channels mean ---
@@ -1372,34 +1389,24 @@ def main():
             if size_band_gte(r.get("trancheEffectifsEtablissement", "NN"), SIZE_MIN)
         ]
 
-        # Filter 3 — per-channel keyword filter
-        ch_cfg = CHANNEL_KEYWORDS.get(channel, {})
-        apply_kw = ch_cfg.get("mode") == "strict" or total > 500
-        if apply_kw:
-            filtered = [
-                r for r in sized
-                if matches_keyword(
-                    r.get("denominationUniteLegale")
-                    or (r.get("uniteLegale") or {}).get("denominationUniteLegale", ""),
-                    channel=channel,
-                )
-            ]
-            print(f"  Channel keyword filter ({len(sized)} -> {len(filtered)})")
-        else:
-            filtered = sized
+        print(f"  Active: {len(active)}, with size >= {SIZE_MIN}: {len(sized)}")
 
-        print(f"  Kept {len(filtered)} records after filtering.")
-
-        for rec in filtered:
+        # NO keyword filtering — keep all. Confidence is assigned instead.
+        for rec in sized:
             ul = rec.get("uniteLegale") or {}
             siret = rec.get("siret", "")
+            name = (
+                rec.get("denominationUniteLegale")
+                or ul.get("denominationUniteLegale", "")
+            )
+            # Determine confidence level
+            has_keyword = matches_keyword(name, channel=channel)
+            confidence = "High" if has_keyword else "Medium"
+
             row = {
                 "siret": siret,
                 "siren": siret[:9] if len(siret) >= 9 else "",
-                "legal_name": (
-                    rec.get("denominationUniteLegale")
-                    or ul.get("denominationUniteLegale", "")
-                ),
+                "legal_name": name,
                 "channel": channel,
                 "ape_code": ape_code,
                 "address": build_address(rec),
@@ -1407,9 +1414,21 @@ def main():
                 "city": _get_field(rec, "libelleCommuneEtablissement"),
                 "size_band": rec.get("trancheEffectifsEtablissement", ""),
                 "retailer_type": "",  # filled in phase 2
+                "confidence": confidence,
             }
             seen_sirets.add(siret)
             all_rows.append(row)
+
+        kw_count = sum(
+            1 for r in sized
+            if matches_keyword(
+                r.get("denominationUniteLegale")
+                or (r.get("uniteLegale") or {}).get("denominationUniteLegale", ""),
+                channel=channel,
+            )
+        )
+        print(f"  Kept {len(sized)} records ({kw_count} High confidence, "
+              f"{len(sized) - kw_count} Medium confidence)")
 
     # =====================================================================
     # PHASE 1b — Search known chains & buying groups per channel
@@ -1425,7 +1444,13 @@ def main():
             rec = _flatten_record(rec)
             siret = rec.get("siret", "")
             if siret in seen_sirets:
-                continue  # already found via APE code search
+                # Already found — upgrade its confidence to High
+                for existing in all_rows:
+                    if existing["siret"] == siret:
+                        existing["confidence"] = "High"
+                        if not existing["retailer_type"]:
+                            existing["retailer_type"] = rtype
+                continue
             ul = rec.get("uniteLegale") or {}
             row = {
                 "siret": siret,
@@ -1441,6 +1466,7 @@ def main():
                 "city": _get_field(rec, "libelleCommuneEtablissement"),
                 "size_band": rec.get("trancheEffectifsEtablissement", ""),
                 "retailer_type": rtype,  # pre-classified
+                "confidence": "High",  # known retailer = always high
             }
             seen_sirets.add(siret)
             all_rows.append(row)
@@ -1479,6 +1505,9 @@ def main():
         result = group.iloc[0].copy()
         result["channel"] = " | ".join(channels)
         result["ape_code"] = " | ".join(ape_codes)
+        # Keep best confidence (High > Medium)
+        if "High" in group["confidence"].values:
+            result["confidence"] = "High"
         return result
 
     df = (
@@ -1538,7 +1567,8 @@ def main():
     # PHASE 7 — Output (per-channel sheets + All + Online/Omni + Metadata)
     # =====================================================================
     output_cols = [
-        "siret", "siren", "legal_name", "channel", "retailer_type",
+        "siret", "siren", "legal_name", "channel", "confidence",
+        "retailer_type",
         "ape_code", "address", "postcode", "city", "size_band",
         "turnover_actual", "turnover_est_range", "turnover_year",
         "turnover_source",
@@ -1549,7 +1579,14 @@ def main():
         "turnover_display": "turnover_actual",
         "turnover_estimate": "turnover_est_range",
     })
+    # Ensure confidence column exists even after collapse
+    if "confidence" not in df.columns:
+        df["confidence"] = "Medium"
     df = df[output_cols]
+
+    # Sort: High confidence first within each channel
+    df = df.sort_values(["channel", "confidence", "legal_name"],
+                        ascending=[True, True, True]).reset_index(drop=True)
 
     # Build per-channel DataFrames.  A retailer tagged "CE | Photo" appears
     # in both the CE sheet and the Photo sheet.
@@ -1588,7 +1625,7 @@ def main():
             ("Notice", DATA_NOTICE),
             ("Generated", time.strftime("%Y-%m-%d %H:%M:%S")),
             ("Source — retailers",
-             "INSEE SIRENE API v3 — national business registry"),
+             "INSEE SIRENE API v3.11 — national business registry"),
             ("Source — online/omni retailers",
              "Static reference list based on market research. SIRENE API used "
              "to enrich with live registration data where SIREN is known. "
@@ -1606,6 +1643,12 @@ def main():
              "Official gazette, depot des comptes = company is alive and filing."),
             ("Size filter", f"trancheEffectifs >= {SIZE_MIN}"),
             ("APE codes queried", ", ".join(APE_CODES.keys())),
+            ("Confidence — High (green)",
+             "Company name matches channel-specific keywords OR is a known "
+             "chain/buying group for that channel. Very likely relevant."),
+            ("Confidence — Medium (yellow)",
+             "Correct APE code and size, but name does not match channel "
+             "keywords. Probably relevant but worth a quick manual check."),
             ("Retailer type — Chain",
              "Matched against known chain name list (FNAC, DARTY, BOULANGER, "
              "ORANGE, SFR, etc.) OR SIREN has >= "
@@ -1621,6 +1664,40 @@ def main():
         ]
         meta = pd.DataFrame(meta_rows, columns=["Field", "Value"])
         meta.to_excel(writer, index=False, sheet_name="Metadata")
+
+    # -----------------------------------------------------------------
+    # Apply conditional formatting (green = High, yellow = Medium)
+    # -----------------------------------------------------------------
+    from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill, Font
+
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    green_font = Font(color="006100")
+    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    yellow_font = Font(color="9C6500")
+
+    wb = load_workbook(output_file)
+    conf_idx = output_cols.index("confidence")  # 0-based position in output_cols
+
+    sheets_to_format = list(channel_dfs.keys()) + ["All Retailers"]
+    for sheet_name in sheets_to_format:
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        for row_cells in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            conf_cell = row_cells[conf_idx]
+            val = conf_cell.value
+            if val == "High":
+                for cell in row_cells:
+                    cell.fill = green_fill
+                    cell.font = green_font
+            elif val == "Medium":
+                for cell in row_cells:
+                    cell.fill = yellow_fill
+                    cell.font = yellow_font
+
+    wb.save(output_file)
+    wb.close()
 
     print(f"\nWrote {len(df)} rows to {output_file}")
     print(f"  Sheets: {', '.join(ch for ch in channel_names if ch in channel_dfs)}, "
