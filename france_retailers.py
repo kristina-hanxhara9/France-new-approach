@@ -99,6 +99,139 @@ APE_CODES = {
 }
 
 # ---------------------------------------------------------------------------
+# PER-CHANNEL KEYWORD FILTERS
+# ---------------------------------------------------------------------------
+# When an APE code returns many results (broad code), we filter by these
+# keywords to keep only relevant retailers.  If a code is "strict" we ALWAYS
+# apply the keyword filter regardless of result count.  If "loose" we only
+# apply when > 500 results.
+
+CHANNEL_KEYWORDS = {
+    "Photo": {
+        "keywords": [
+            "PHOTO", "PHOX", "CAMARA", "OPTIQUE", "CAMERA", "CANON",
+            "NIKON", "SONY", "FUJI", "LEICA", "OBJECTIF", "LABO PHOTO",
+            "STUDIO PHOTO", "IMAGE", "FNAC", "DARTY",
+        ],
+        "mode": "strict",  # 47.78C is very broad — always filter
+    },
+    "CE": {
+        "keywords": [
+            "FNAC", "DARTY", "BOULANGER", "ELECTRO", "ELECTROMENAGER",
+            "MULTIMEDIA", "HI-FI", "HIFI", "AUDIO", "VIDEO", "SONO",
+            "INFORMATIQUE", "ORDINATEUR", "COMPUTER", "NUMERIQUE",
+            "DIGITAL", "MICROMANIA", "CULTURA", "LDLC", "MATERIEL",
+            "SAMSUNG", "LG ", "HUBSIDE", "LICK", "TV ", "TELE",
+        ],
+        "mode": "loose",
+    },
+    "MDA/SDA": {
+        "keywords": [
+            "ELECTROMENAGER", "ELECTRO MENAGER", "MENAGER", "DARTY",
+            "BOULANGER", "BUT ", "BUT-", "CONFORAMA", "CUISINE",
+            "CUISSON", "LAVE", "FRIGO", "REFRIGER", "CONGELAT",
+            "ASPIRAT", "CAFETIERE", "ROBOT", "KENWOOD", "MOULINEX",
+            "BOSCH", "WHIRLPOOL", "ELECTROLUX", "MIELE", "SIEMENS",
+            "SMEG", "KITCHENAID", "DYSON", "SEB ", "DELONGHI",
+            "BRANDT", "VEDETTE", "CANDY", "HAIER", "HISENSE",
+            "EXPERT", "GITEM", "PULSAT", "EURONICS", "PRO & CIE",
+        ],
+        "mode": "loose",
+    },
+    "Mobile": {
+        "keywords": [
+            "TELEPHON", "MOBILE", "SMARTPHONE", "ORANGE", "SFR",
+            "BOUYGUES", "FREE ", "APPLE", "SAMSUNG", "XIAOMI",
+            "HUAWEI", "OPPO", "WIKO", "POINT SERVICE", "PSM",
+            "WEFIX", "WE FIX", "SAVE ", "IRIPARO", "MOBILAX",
+            "HUBSIDE", "TELECOM", "PHONE",
+        ],
+        "mode": "loose",
+    },
+    "Accessories": {
+        "keywords": [
+            "ACCESSOIRE", "COQUE", "PROTECTION", "CHARGEUR", "CABLE",
+            "ECOUTEUR", "CASQUE", "ENCEINTE", "BATTERIE", "ETUI",
+            "SUPPORT", "HOLDER", "SCREEN", "FILM", "VERRE TREMPE",
+            "RHINOSHIELD", "BELKIN", "ANKER", "FNAC", "DARTY",
+            "BOULANGER", "LICK", "MOBILIZE",
+        ],
+        "mode": "strict",  # 47.59B is very broad
+    },
+    "Refurb": {
+        "keywords": [
+            "RECONDITION", "RECONDITIO", "REFURB", "REPAIR", "REPARATION",
+            "CASH CONVERTER", "CASH EXPRESS", "EASY CASH", "HAPPY CASH",
+            "BACK MARKET", "BACKMARKET", "RECOMMERCE", "SMAAART",
+            "CERTIDEAL", "REMADE", "REBORN", "OCCASION", "SECOND",
+            "SAVE ", "WEFIX", "WE FIX", "IRIPARO", "MOBILAX",
+            "POINT SERVICE", "PSM ", "INFORMATIQUE", "DEPANNAGE",
+            "MAINTENANCE",
+        ],
+        "mode": "loose",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# PER-CHANNEL KNOWN RETAILERS — searched by name via SIRENE
+# ---------------------------------------------------------------------------
+# These are retailers we KNOW belong to each channel.  We search SIRENE for
+# them by name (denominationUniteLegale) so we capture them even if the APE
+# code query doesn't find them.  "type" is pre-assigned.
+
+CHANNEL_KNOWN_RETAILERS = {
+    "Photo": {
+        "chains": [
+            "PHOX", "CAMARA", "FNAC", "DARTY",
+        ],
+        "buying_groups": [],
+    },
+    "CE": {
+        "chains": [
+            "FNAC", "DARTY", "BOULANGER", "ELECTRO DEPOT", "LDLC",
+            "MATERIEL NET", "CULTURA", "LICK", "HUBSIDE", "MICROMANIA",
+            "SAMSUNG ELECTRONICS", "APPLE RETAIL",
+        ],
+        "buying_groups": [
+            "EXPERT", "EURONICS", "GITEM",
+            "PRO & CIE", "CONNEXION",
+        ],
+    },
+    "MDA/SDA": {
+        "chains": [
+            "DARTY", "BOULANGER", "BUT", "CONFORAMA", "ELECTRO DEPOT",
+        ],
+        "buying_groups": [
+            "EXPERT", "EURONICS", "GITEM", "PULSAT",
+            "PRO & CIE", "CONNEXION", "MENAGER PLUS",
+        ],
+    },
+    "Mobile": {
+        "chains": [
+            "ORANGE", "SFR", "BOUYGUES TELECOM", "FREE",
+            "APPLE RETAIL", "SAMSUNG ELECTRONICS", "XIAOMI", "HUAWEI",
+            "HUBSIDE",
+        ],
+        "buying_groups": [],
+    },
+    "Accessories": {
+        "chains": [
+            "FNAC", "DARTY", "BOULANGER", "LICK",
+        ],
+        "buying_groups": [],
+    },
+    "Refurb": {
+        "chains": [
+            "CASH CONVERTERS", "EASY CASH", "HAPPY CASH", "CASH EXPRESS",
+            "BACK MARKET", "RECOMMERCE", "SMAAART", "CERTIDEAL",
+            "REMADE", "REBORN", "POINT SERVICE MOBILES", "WEFIX",
+            "SAVE", "IRIPARO", "MOBILAX",
+        ],
+        "buying_groups": [],
+    },
+}
+
+# ---------------------------------------------------------------------------
 # APE CODE REFERENCE — descriptions in French, English, Swedish
 # ---------------------------------------------------------------------------
 # APE (Activité Principale Exercée) is the French equivalent of SIC/NACE.
@@ -228,8 +361,13 @@ def build_overview_sheet():
              "channels. For example, APE code 47.42Z = 'Retail sale of "
              "telecommunications equipment' = our 'Mobile' channel."),
         ("", "We then filter by: (1) active businesses only, (2) 10 or more "
-             "employees (to exclude tiny shops), and (3) relevant keywords in "
-             "the company name when the APE code is too broad."),
+             "employees (to exclude tiny shops), and (3) channel-specific "
+             "keywords in the company name (e.g., Photo channel looks for "
+             "PHOTO, PHOX, CAMARA, NIKON, etc.)."),
+        ("", "Additionally, we search SIRENE by name for known chains and "
+             "buying groups per channel (e.g., FNAC, DARTY for CE; EXPERT, "
+             "GITEM for MDA/SDA) to catch retailers that might use different "
+             "APE codes."),
         ("", ""),
 
         # --- Section: What the channels mean ---
@@ -311,11 +449,8 @@ def build_ape_reference_sheet():
     return pd.DataFrame(rows)
 
 
-KEYWORDS = [
-    "TELEPHON", "MOBILE", "PHOTO", "MULTIMEDIA", "ELECTROMENAGER",
-    "RECONDITIONN", "NUMERIQUE", "ACCESSOIRE", "HI-FI", "SMARTPHONE",
-    "DARTY", "FNAC", "BOULANGER", "ELECTRODEPOT", "BUT",
-]
+# Build a flat keyword list for backward compatibility
+KEYWORDS = list({kw for ch in CHANNEL_KEYWORDS.values() for kw in ch["keywords"]})
 
 SIZE_MIN = "11"  # trancheEffectifs code — means 10+ employees
 
@@ -554,12 +689,16 @@ def size_band_gte(value, minimum):
         return False
 
 
-def matches_keyword(name):
-    """Return True if *name* contains at least one KEYWORD (case-insensitive)."""
+def matches_keyword(name, channel=None):
+    """Return True if *name* contains at least one keyword for the channel."""
     if not name:
         return False
     upper = name.upper()
-    return any(kw in upper for kw in KEYWORDS)
+    if channel and channel in CHANNEL_KEYWORDS:
+        kws = CHANNEL_KEYWORDS[channel]["keywords"]
+    else:
+        kws = KEYWORDS
+    return any(kw in upper for kw in kws)
 
 
 def _flatten_record(rec):
@@ -771,6 +910,61 @@ def fetch_all_for_code(ape_code):
             break
 
     return records, total
+
+
+def search_by_name(name, limit=20):
+    """Search SIRENE for active establishments matching a company name."""
+    headers = _sirene_headers
+    # Use wildcard search on denominationUniteLegale
+    q = f'periode(etatAdministratifEtablissement:A) AND denominationUniteLegale:"{name}"*'
+    params = {"q": q, "nombre": limit}
+    time.sleep(2)
+    try:
+        resp = http.get(BASE_URL, headers=headers, params=params, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("etablissements", [])
+    except Exception as exc:
+        print(f"  [WARN] Name search '{name}': {exc}")
+    return []
+
+
+def fetch_known_retailers_for_channel(channel):
+    """Search SIRENE for known chains/buying groups for a channel.
+
+    Returns a list of (record, retailer_type) tuples.
+    """
+    known = CHANNEL_KNOWN_RETAILERS.get(channel, {})
+    chains = known.get("chains", [])
+    buying_groups = known.get("buying_groups", [])
+    results = []
+    seen_sirets = set()
+
+    for name in chains:
+        if TEST_MODE and len(results) >= TEST_LIMIT:
+            break
+        recs = search_by_name(name, limit=50)
+        for rec in recs:
+            siret = rec.get("siret", "")
+            if siret and siret not in seen_sirets:
+                seen_sirets.add(siret)
+                results.append((rec, "Chain"))
+        if recs:
+            print(f"    Known chain '{name}': {len(recs)} establishments")
+
+    for name in buying_groups:
+        if TEST_MODE and len(results) >= TEST_LIMIT:
+            break
+        recs = search_by_name(name, limit=50)
+        for rec in recs:
+            siret = rec.get("siret", "")
+            if siret and siret not in seen_sirets:
+                seen_sirets.add(siret)
+                results.append((rec, "Buying Group"))
+        if recs:
+            print(f"    Known buying group '{name}': {len(recs)} establishments")
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -1144,9 +1338,10 @@ def main():
         return
 
     # =====================================================================
-    # PHASE 1 — Fetch & filter from SIRENE
+    # PHASE 1 — Fetch & filter from SIRENE (APE code discovery)
     # =====================================================================
     all_rows = []
+    seen_sirets = set()  # track across channels for dedup
 
     for ape_code, channel in APE_CODES.items():
         print(f"\nFetching APE {ape_code} ({channel}) …")
@@ -1177,16 +1372,19 @@ def main():
             if size_band_gte(r.get("trancheEffectifsEtablissement", "NN"), SIZE_MIN)
         ]
 
-        # Filter 3 — keyword filter (only if > 500 results for this code)
-        if total > 500:
+        # Filter 3 — per-channel keyword filter
+        ch_cfg = CHANNEL_KEYWORDS.get(channel, {})
+        apply_kw = ch_cfg.get("mode") == "strict" or total > 500
+        if apply_kw:
             filtered = [
                 r for r in sized
                 if matches_keyword(
                     r.get("denominationUniteLegale")
-                    or (r.get("uniteLegale") or {}).get("denominationUniteLegale", "")
+                    or (r.get("uniteLegale") or {}).get("denominationUniteLegale", ""),
+                    channel=channel,
                 )
             ]
-            print(f"  Keyword filter applied ({len(sized)} -> {len(filtered)})")
+            print(f"  Channel keyword filter ({len(sized)} -> {len(filtered)})")
         else:
             filtered = sized
 
@@ -1208,8 +1406,46 @@ def main():
                 "postcode": _get_field(rec, "codePostalEtablissement"),
                 "city": _get_field(rec, "libelleCommuneEtablissement"),
                 "size_band": rec.get("trancheEffectifsEtablissement", ""),
+                "retailer_type": "",  # filled in phase 2
             }
+            seen_sirets.add(siret)
             all_rows.append(row)
+
+    # =====================================================================
+    # PHASE 1b — Search known chains & buying groups per channel
+    # =====================================================================
+    print("\n" + "=" * 60)
+    print("Searching for known retailers by name …")
+    print("=" * 60)
+    for channel in sorted(set(APE_CODES.values())):
+        print(f"\n  [{channel}] known retailers:")
+        known_results = fetch_known_retailers_for_channel(channel)
+        added = 0
+        for rec, rtype in known_results:
+            rec = _flatten_record(rec)
+            siret = rec.get("siret", "")
+            if siret in seen_sirets:
+                continue  # already found via APE code search
+            ul = rec.get("uniteLegale") or {}
+            row = {
+                "siret": siret,
+                "siren": siret[:9] if len(siret) >= 9 else "",
+                "legal_name": (
+                    rec.get("denominationUniteLegale")
+                    or ul.get("denominationUniteLegale", "")
+                ),
+                "channel": channel,
+                "ape_code": rec.get("activitePrincipaleEtablissement", ""),
+                "address": build_address(rec),
+                "postcode": _get_field(rec, "codePostalEtablissement"),
+                "city": _get_field(rec, "libelleCommuneEtablissement"),
+                "size_band": rec.get("trancheEffectifsEtablissement", ""),
+                "retailer_type": rtype,  # pre-classified
+            }
+            seen_sirets.add(siret)
+            all_rows.append(row)
+            added += 1
+        print(f"  [{channel}] Added {added} new establishments from known retailer search")
 
     if not all_rows:
         print("\nNo records collected. Check your credentials and network.")
@@ -1222,14 +1458,17 @@ def main():
     # =====================================================================
     siren_counts = Counter(df["siren"])
 
-    df["retailer_type"] = df.apply(
-        lambda row: classify_retailer_type(
+    def _classify(row):
+        # Keep pre-classified type from known retailer search
+        if row.get("retailer_type"):
+            return row["retailer_type"]
+        return classify_retailer_type(
             (row["legal_name"] or "").upper(),
             row["siren"],
             siren_counts,
-        ),
-        axis=1,
-    )
+        )
+
+    df["retailer_type"] = df.apply(_classify, axis=1)
 
     # =====================================================================
     # PHASE 3 — Channel collapsing & deduplication
