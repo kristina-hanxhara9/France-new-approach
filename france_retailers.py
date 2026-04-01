@@ -4,7 +4,7 @@ Query the French INSEE SIRENE API to find retailers across multiple channels,
 classify them (Chain / Buying Group / Independent), and enrich with turnover
 data from INPI / Pappers annual accounts + BODACC filing status.
 
-Set BEARER_TOKEN below and run: python france_retailers.py
+Set up your .env file and run: python france_retailers.py
 
 Note: All source data comes from public French government registries
 (INSEE SIRENE, INPI, BODACC). The channel mappings, retailer classification
@@ -43,9 +43,17 @@ DATA_NOTICE = (
 # CONFIGURATION — reads from .env file or environment variables
 # ---------------------------------------------------------------------------
 
-BEARER_TOKEN = os.environ.get("SIRENE_BEARER_TOKEN", "")
+# INSEE SIRENE — provide your client ID and secret from api.insee.fr.
+# The script automatically generates a Bearer token from these.
+SIRENE_CLIENT_ID = os.environ.get("SIRENE_CLIENT_ID", "")
+SIRENE_CLIENT_SECRET = os.environ.get("SIRENE_CLIENT_SECRET", "")
+
+# INPI — optional, for actual turnover data
 INPI_USERNAME = os.environ.get("INPI_USERNAME", "")
 INPI_PASSWORD = os.environ.get("INPI_PASSWORD", "")
+
+# This gets filled automatically — do not set manually
+BEARER_TOKEN = ""
 
 APE_CODES = {
     "47.78C": "Photo",
@@ -57,6 +65,219 @@ APE_CODES = {
     "95.11Z": "Refurb",
     "95.12Z": "Refurb",
 }
+
+# ---------------------------------------------------------------------------
+# APE CODE REFERENCE — descriptions in French, English, Swedish
+# ---------------------------------------------------------------------------
+# APE (Activité Principale Exercée) is the French equivalent of SIC/NACE.
+# These are the codes we query, plus related codes found in results.
+
+APE_DESCRIPTIONS = {
+    # Codes we actively query
+    "47.78C": {
+        "fr": "Commerce de détail d'articles de sport en magasin spécialisé / Optique et photographie",
+        "en": "Retail sale of photographic, optical and precision equipment",
+        "sv": "Detaljhandel med foto- och optikvaror",
+        "channel": "Photo",
+        "queried": True,
+    },
+    "47.43Z": {
+        "fr": "Commerce de détail de matériels audio et vidéo en magasin spécialisé",
+        "en": "Retail sale of audio and video equipment in specialised stores",
+        "sv": "Specialiserad detaljhandel med ljud- och bildanläggningar",
+        "channel": "CE",
+        "queried": True,
+    },
+    "47.41Z": {
+        "fr": "Commerce de détail d'ordinateurs, d'unités périphériques et de logiciels",
+        "en": "Retail sale of computers, peripheral units and software",
+        "sv": "Specialiserad detaljhandel med datorer och tillbehör",
+        "channel": "CE",
+        "queried": True,
+    },
+    "47.54Z": {
+        "fr": "Commerce de détail d'appareils électroménagers en magasin spécialisé",
+        "en": "Retail sale of electrical household appliances in specialised stores",
+        "sv": "Specialiserad detaljhandel med hushållsapparater",
+        "channel": "MDA/SDA",
+        "queried": True,
+    },
+    "47.42Z": {
+        "fr": "Commerce de détail de matériels de télécommunication en magasin spécialisé",
+        "en": "Retail sale of telecommunications equipment in specialised stores",
+        "sv": "Specialiserad detaljhandel med telekommunikationsutrustning",
+        "channel": "Mobile",
+        "queried": True,
+    },
+    "47.59B": {
+        "fr": "Commerce de détail d'autres équipements du foyer",
+        "en": "Retail sale of other household equipment not elsewhere classified",
+        "sv": "Detaljhandel med övrig hushållsutrustning",
+        "channel": "Accessories",
+        "queried": True,
+    },
+    "95.11Z": {
+        "fr": "Réparation d'ordinateurs et d'équipements périphériques",
+        "en": "Repair of computers and peripheral equipment",
+        "sv": "Reparation av datorer och kringutrustning",
+        "channel": "Refurb",
+        "queried": True,
+    },
+    "95.12Z": {
+        "fr": "Réparation d'équipements de communication",
+        "en": "Repair of communication equipment",
+        "sv": "Reparation av kommunikationsutrustning",
+        "channel": "Refurb",
+        "queried": True,
+    },
+    # Related codes (not queried but may appear in omni-retailer sheet)
+    "47.11F": {
+        "fr": "Hypermarchés",
+        "en": "Hypermarkets (>2,500 sqm)",
+        "sv": "Stormarknader (>2 500 kvm)",
+        "channel": "N/A — generic retail",
+        "queried": False,
+    },
+    "47.19Z": {
+        "fr": "Grands magasins",
+        "en": "Department stores",
+        "sv": "Varuhus",
+        "channel": "N/A — generic retail",
+        "queried": False,
+    },
+    "47.91B": {
+        "fr": "Vente à distance sur catalogue spécialisé",
+        "en": "Distance selling / e-commerce",
+        "sv": "Distanshandel / e-handel",
+        "channel": "N/A — e-commerce",
+        "queried": False,
+    },
+    "47.11C": {
+        "fr": "Supermarchés",
+        "en": "Supermarkets (400-2,500 sqm)",
+        "sv": "Snabbköp/Supermarknader (400-2 500 kvm)",
+        "channel": "N/A — generic retail",
+        "queried": False,
+    },
+}
+
+
+def build_overview_sheet():
+    """
+    Build a DataFrame with a non-technical overview of how the database works,
+    APE code descriptions, and methodology explanation.
+    """
+    overview_rows = [
+        # --- Section: What is this file ---
+        ("WHAT IS THIS FILE?", ""),
+        ("", "This Excel file contains a database of French retailers that sell "
+             "consumer electronics (CE), major/small domestic appliances (MDA/SDA), "
+             "mobile phones, photo equipment, accessories, and refurbished goods."),
+        ("", ""),
+
+        # --- Section: Where does the data come from ---
+        ("WHERE DOES THE DATA COME FROM?", ""),
+        ("", "All retailer data comes from official French government registries:"),
+        ("INSEE SIRENE", "The national registry of all French businesses. Every "
+         "company in France is registered here with a unique SIRET number, their "
+         "activity code (APE), address, and employee count. This is public data."),
+        ("INPI", "The national intellectual property institute also holds annual "
+         "accounts (turnover, profit) filed by companies. Free to access."),
+        ("BODACC", "The official gazette of commercial announcements. Tells us if "
+         "a company is actively filing accounts (a sign the business is alive)."),
+        ("", ""),
+
+        # --- Section: How are retailers found ---
+        ("HOW ARE RETAILERS FOUND?", ""),
+        ("", "Every French business has an APE code — a 5-character code that "
+             "describes their main activity. It is the French equivalent of SIC "
+             "codes used in the UK/US or SNI codes used in Sweden."),
+        ("", "We search for specific APE codes that correspond to our retail "
+             "channels. For example, APE code 47.42Z = 'Retail sale of "
+             "telecommunications equipment' = our 'Mobile' channel."),
+        ("", "We then filter by: (1) active businesses only, (2) 10 or more "
+             "employees (to exclude tiny shops), and (3) relevant keywords in "
+             "the company name when the APE code is too broad."),
+        ("", ""),
+
+        # --- Section: What the channels mean ---
+        ("WHAT DO THE CHANNELS MEAN?", ""),
+        ("Photo", "Specialist photography equipment retailers."),
+        ("CE", "Consumer electronics — TVs, audio, computers, peripherals."),
+        ("MDA/SDA", "Major domestic appliances (washing machines, fridges) and "
+         "small domestic appliances (kettles, toasters, coffee machines)."),
+        ("Mobile", "Mobile phone specialist retailers."),
+        ("Accessories", "Phone cases, cables, chargers, screen protectors, etc."),
+        ("Refurb", "Refurbished/repaired electronics and devices."),
+        ("", ""),
+
+        # --- Section: Chain vs Independent vs Buying Group ---
+        ("HOW IS RETAILER TYPE DETERMINED?", ""),
+        ("Chain", "The company name matches a known chain (FNAC, DARTY, "
+         "BOULANGER, etc.) OR the same parent company has 3+ stores in our "
+         "database. This is our own classification, not from any government "
+         "database."),
+        ("Buying Group", "The company name matches a known French buying group "
+         "(EXPERT, EURONICS, GITEM, etc.). These are independent shops that "
+         "group together to negotiate better purchasing terms with suppliers."),
+        ("Independent", "Everything else — single-location shops that don't "
+         "belong to a known chain or buying group."),
+        ("", ""),
+
+        # --- Section: Turnover data ---
+        ("WHERE DOES TURNOVER DATA COME FROM?", ""),
+        ("turnover_actual", "Real filed turnover (chiffre d'affaires) from INPI "
+         "annual accounts. This is what the company declared to the tax "
+         "authority. Not available for all companies — some file as "
+         "confidential, some are too small to file."),
+        ("turnover_est_range", "When we have no real figure, we estimate a rough "
+         "range based on the number of employees. For example, a CE retailer "
+         "with 10-19 employees typically does €1M-€5M in turnover. These are "
+         "rough estimates, not real figures."),
+        ("", ""),
+
+        # --- Section: Online & Omni sheet ---
+        ("WHAT IS THE 'ONLINE & OMNI RETAIL' SHEET?", ""),
+        ("", "Major e-commerce and hypermarket retailers that sell CE/MDA/Mobile "
+             "but don't show up in our APE code searches because they register "
+             "under generic codes like 'e-commerce' or 'hypermarket'. We added "
+             "them manually based on market knowledge. Examples: Amazon, "
+             "Cdiscount, Carrefour (online)."),
+        ("", ""),
+
+        # --- Section: Limitations ---
+        ("WHAT ARE THE LIMITATIONS?", ""),
+        ("APE codes can be wrong", "Companies self-declare their APE code when "
+         "they register and rarely update it. INSEE estimates ~15-20%% of codes "
+         "are inaccurate."),
+        ("We miss hypermarkets", "Carrefour, Auchan, Leclerc sell massive "
+         "volumes of electronics but register as 'hypermarket' (47.11F), not "
+         "under electronics-specific codes."),
+        ("We miss e-commerce", "Amazon, Cdiscount, etc. register as 'distance "
+         "selling' (47.91B). The Online & Omni sheet covers the major ones."),
+        ("Size filter", "We exclude businesses with fewer than 10 employees. "
+         "Some real shops in rural areas are smaller than this."),
+        ("Turnover coverage", "Not all companies have filed public accounts. "
+         "Coverage is better for larger companies (SA, SAS, SARL)."),
+    ]
+
+    return pd.DataFrame(overview_rows, columns=["Topic", "Description"])
+
+
+def build_ape_reference_sheet():
+    """Build a DataFrame with APE code descriptions in FR/EN/SV."""
+    rows = []
+    for code, info in APE_DESCRIPTIONS.items():
+        rows.append({
+            "APE Code": code,
+            "Channel": info["channel"],
+            "Queried?": "Yes" if info["queried"] else "No (related code)",
+            "Description (FR)": info["fr"],
+            "Description (EN)": info["en"],
+            "Description (SV)": info["sv"],
+        })
+    return pd.DataFrame(rows)
+
 
 KEYWORDS = [
     "TELEPHON", "MOBILE", "PHOTO", "MULTIMEDIA", "ELECTROMENAGER",
@@ -79,6 +300,10 @@ FIELDS = [
 
 BASE_URL = "https://api.insee.fr/entreprises/sirene/V3/siret"
 PAGE_SIZE = 1000
+
+# TEST MODE — set to True to fetch only 5 records per APE code (quick check)
+TEST_MODE = False
+TEST_LIMIT = 5
 
 # Ordered size bands for comparison
 SIZE_BANDS = [
@@ -336,15 +561,43 @@ def classify_retailer_type(name_upper, siren, siren_counts):
     return "Independent"
 
 
+def generate_bearer_token():
+    """
+    Exchange INSEE client ID + secret for a Bearer token.
+    This is the standard OAuth2 client_credentials flow.
+    Returns the token string, or None on failure.
+    """
+    if not SIRENE_CLIENT_ID or not SIRENE_CLIENT_SECRET:
+        return None
+    try:
+        resp = requests.post(
+            "https://api.insee.fr/token",
+            data={"grant_type": "client_credentials"},
+            auth=(SIRENE_CLIENT_ID, SIRENE_CLIENT_SECRET),
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            token = resp.json().get("access_token")
+            if token:
+                print("  [INSEE] Bearer token generated successfully.")
+                return token
+        print(f"  [INSEE] Token generation failed: HTTP {resp.status_code} — "
+              f"{resp.text[:200]}")
+    except Exception as exc:
+        print(f"  [INSEE] Token generation error: {exc}")
+    return None
+
+
 def fetch_all_for_code(ape_code):
     """Paginate through SIRENE API for a single APE code. Returns (records, total)."""
     headers = {"Authorization": f"Bearer {BEARER_TOKEN}", "Accept": "application/json"}
+    page_size = TEST_LIMIT if TEST_MODE else PAGE_SIZE
     params_base = {
         "q": (
             f"activitePrincipaleEtablissement:{ape_code} "
             f"AND etatAdministratifEtablissement:A"
         ),
-        "nombre": PAGE_SIZE,
+        "nombre": page_size,
         "champs": ",".join(FIELDS),
     }
 
@@ -365,13 +618,22 @@ def fetch_all_for_code(ape_code):
         header = data.get("header", {})
         if total is None:
             total = header.get("total", 0)
-            print(f"  APE {ape_code}: {total} total records found")
+            if TEST_MODE:
+                print(f"  APE {ape_code}: {total} total in registry, "
+                      f"fetching {TEST_LIMIT} (TEST MODE)")
+            else:
+                print(f"  APE {ape_code}: {total} total records found")
 
         batch = data.get("etablissements", [])
         if not batch:
             break
 
         records.extend(batch)
+
+        # In test mode, stop after one page
+        if TEST_MODE:
+            break
+
         debut += PAGE_SIZE
         if debut >= total:
             break
@@ -493,7 +755,7 @@ def load_turnover_data(sirens_needed):
     Try each turnover source in priority order for the given SIRENs.
     Returns dict: siren -> {turnover_eur, year, source}.
     """
-    if SKIP_TURNOVER_API:
+    if SKIP_TURNOVER_API or TEST_MODE:
         return {}
 
     turnover_map = {}
@@ -583,7 +845,7 @@ def check_bodacc_filing(siren):
 
 def enrich_bodacc(df):
     """Add BODACC filing status columns to the DataFrame."""
-    if SKIP_BODACC:
+    if SKIP_BODACC or TEST_MODE:
         df["bodacc_filing"] = ""
         df["bodacc_last_date"] = ""
         return df
@@ -624,7 +886,10 @@ def enrich_omni_retailers():
     For each, attempt a SIRENE API lookup by SIREN to pull live data.
     Returns a DataFrame ready to write as an Excel sheet.
     """
-    print("\n--- Enriching online & omni-channel retailers via SIRENE ---")
+    if TEST_MODE:
+        print("\n--- Online & omni-channel retailers (static only, TEST MODE) ---")
+    else:
+        print("\n--- Enriching online & omni-channel retailers via SIRENE ---")
     headers = {"Authorization": f"Bearer {BEARER_TOKEN}", "Accept": "application/json"}
     rows = []
 
@@ -647,7 +912,10 @@ def enrich_omni_retailers():
             "notes": entry["notes"],
         }
 
-        # Try SIRENE lookup by SIREN
+        # Try SIRENE lookup by SIREN (skip in test mode)
+        if TEST_MODE:
+            rows.append(row)
+            continue
         try:
             time.sleep(1)
             params = {
@@ -717,13 +985,26 @@ def format_turnover(value):
 
 
 def main():
-    if not BEARER_TOKEN:
-        print("ERROR: Set BEARER_TOKEN at the top of the script before running.")
+    global BEARER_TOKEN
+
+    if not SIRENE_CLIENT_ID or not SIRENE_CLIENT_SECRET:
+        print("ERROR: Set SIRENE_CLIENT_ID and SIRENE_CLIENT_SECRET in your .env file.")
+        print("       Get them at https://api.insee.fr → create an application.")
         return
 
     print(f"\n{'='*60}")
     print(DATA_NOTICE)
+    if TEST_MODE:
+        print(f"\n  *** TEST MODE: fetching {TEST_LIMIT} records per APE code ***")
+        print(f"  *** BODACC and INPI turnover lookups skipped ***")
     print(f"{'='*60}\n")
+
+    # Auto-generate Bearer token from client credentials
+    print("Generating INSEE API token …")
+    BEARER_TOKEN = generate_bearer_token()
+    if not BEARER_TOKEN:
+        print("ERROR: Could not generate Bearer token. Check your client ID/secret.")
+        return
 
     # =====================================================================
     # PHASE 1 — Fetch & filter from SIRENE
@@ -799,7 +1080,7 @@ def main():
             all_rows.append(row)
 
     if not all_rows:
-        print("\nNo records collected. Check your BEARER_TOKEN and network.")
+        print("\nNo records collected. Check your credentials and network.")
         return
 
     df = pd.DataFrame(all_rows)
@@ -923,6 +1204,14 @@ def main():
         # Online & omni-channel retailers (static list + SIRENE enrichment)
         omni_df.to_excel(writer, index=False, sheet_name="Online & Omni Retail")
 
+        # Overview sheet (non-technical explanation)
+        overview_df = build_overview_sheet()
+        overview_df.to_excel(writer, index=False, sheet_name="How This Works")
+
+        # APE code reference sheet (FR / EN / SV descriptions)
+        ape_ref_df = build_ape_reference_sheet()
+        ape_ref_df.to_excel(writer, index=False, sheet_name="APE Code Reference")
+
         # Metadata sheet
         meta_rows = [
             ("Notice", DATA_NOTICE),
@@ -964,7 +1253,8 @@ def main():
 
     print(f"\nWrote {len(df)} rows to {output_file}")
     print(f"  Sheets: {', '.join(ch for ch in channel_names if ch in channel_dfs)}, "
-          f"All Retailers, Online & Omni Retail, Metadata")
+          f"All Retailers, Online & Omni Retail, How This Works, "
+          f"APE Code Reference, Metadata")
 
     # ----- Summary -----
     print(f"\n{'='*60}")
@@ -999,4 +1289,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys
+    if "--test" in sys.argv:
+        TEST_MODE = True
     main()
