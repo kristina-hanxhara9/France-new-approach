@@ -14,11 +14,33 @@ or check before sharing externally.
 
 import os
 import time
+import urllib3
 from collections import Counter
 from pathlib import Path
 
 import requests
 import pandas as pd
+
+# ---------------------------------------------------------------------------
+# HTTP SESSION — handles SSL certificate issues automatically
+# ---------------------------------------------------------------------------
+# Some machines (especially corporate networks / Windows) fail SSL verification
+# when calling api.insee.fr.  We try with verification first; if it fails, we
+# retry without verification and suppress the noisy warnings.
+
+http = requests.Session()
+
+def _test_ssl():
+    """Check if SSL works for the INSEE API. Disable verify if it doesn't."""
+    try:
+        requests.head("https://api.insee.fr", timeout=10)
+    except requests.exceptions.SSLError:
+        print("  [SSL] Certificate verification failed — disabling for this run.")
+        print("  [SSL] This is common on corporate networks. Data is still encrypted.")
+        http.verify = False
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass  # other errors will surface later in the actual API calls
 
 # Load .env file if present (no dependency on python-dotenv)
 _env_path = Path(__file__).resolve().parent / ".env"
@@ -570,7 +592,7 @@ def generate_bearer_token():
     if not SIRENE_CLIENT_ID or not SIRENE_CLIENT_SECRET:
         return None
     try:
-        resp = requests.post(
+        resp = http.post(
             "https://api.insee.fr/token",
             data={"grant_type": "client_credentials"},
             auth=(SIRENE_CLIENT_ID, SIRENE_CLIENT_SECRET),
@@ -608,7 +630,7 @@ def fetch_all_for_code(ape_code):
     while True:
         params = {**params_base, "debut": debut}
         time.sleep(1)
-        resp = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
+        resp = http.get(BASE_URL, headers=headers, params=params, timeout=30)
 
         if resp.status_code != 200:
             print(f"  [ERROR] APE {ape_code} — HTTP {resp.status_code}: {resp.text[:200]}")
@@ -651,7 +673,7 @@ def _inpi_authenticate():
     if not INPI_USERNAME or not INPI_PASSWORD:
         return None
     try:
-        resp = requests.post(
+        resp = http.post(
             "https://registre-national-entreprises.inpi.fr/api/sso/login",
             json={"username": INPI_USERNAME, "password": INPI_PASSWORD},
             timeout=15,
@@ -671,7 +693,7 @@ def _inpi_get_turnover(siren, token):
     """
     try:
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(
+        resp = http.get(
             f"https://registre-national-entreprises.inpi.fr/api/companies/{siren}/attachments",
             headers=headers,
             params={"type": "bilan"},
@@ -699,7 +721,7 @@ def _inpi_get_turnover(siren, token):
         if not att_id:
             return None, None
 
-        detail_resp = requests.get(
+        detail_resp = http.get(
             f"https://registre-national-entreprises.inpi.fr/api/companies/{siren}/attachments/{att_id}",
             headers=headers,
             timeout=15,
@@ -814,7 +836,7 @@ def check_bodacc_filing(siren):
             "sort": "-dateparution",
             "facet": "typeavis_lib",
         }
-        resp = requests.get(BODACC_URL, params=params, timeout=15)
+        resp = http.get(BODACC_URL, params=params, timeout=15)
         if resp.status_code != 200:
             return None
 
@@ -923,7 +945,7 @@ def enrich_omni_retailers():
                 "nombre": 1,
                 "champs": ",".join(FIELDS),
             }
-            resp = requests.get(BASE_URL, headers=headers, params=params, timeout=15)
+            resp = http.get(BASE_URL, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 etabs = data.get("etablissements", [])
@@ -1000,6 +1022,9 @@ def main():
     print(f"{'='*60}\n")
 
     # Auto-generate Bearer token from client credentials
+    # Check SSL before any API calls
+    _test_ssl()
+
     print("Generating INSEE API token …")
     BEARER_TOKEN = generate_bearer_token()
     if not BEARER_TOKEN:
