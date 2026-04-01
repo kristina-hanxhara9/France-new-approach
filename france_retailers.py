@@ -14,12 +14,23 @@ filtering logic, channel mappings, and classification methodology are
 proprietary.
 """
 
+import os
 import time
 from collections import Counter
 from pathlib import Path
 
 import requests
 import pandas as pd
+
+# Load .env file if present (no dependency on python-dotenv)
+_env_path = Path(__file__).resolve().parent / ".env"
+if _env_path.exists():
+    for line in _env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 # ---------------------------------------------------------------------------
 # CONFIDENTIALITY
@@ -32,12 +43,12 @@ CONFIDENTIALITY_NOTICE = (
 )
 
 # ---------------------------------------------------------------------------
-# CONFIGURATION — set your tokens / keys here
+# CONFIGURATION — reads from .env file or environment variables
 # ---------------------------------------------------------------------------
 
-BEARER_TOKEN = ""      # INSEE SIRENE API token (required)
-INPI_USERNAME = ""     # INPI data.inpi.fr username (free — for turnover enrichment)
-INPI_PASSWORD = ""     # INPI data.inpi.fr password (free — for turnover enrichment)
+BEARER_TOKEN = os.environ.get("SIRENE_BEARER_TOKEN", "")
+INPI_USERNAME = os.environ.get("INPI_USERNAME", "")
+INPI_PASSWORD = os.environ.get("INPI_PASSWORD", "")
 
 APE_CODES = {
     "47.78C": "Photo",
