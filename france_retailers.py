@@ -321,8 +321,11 @@ SIZE_MIN = "11"  # trancheEffectifs code — means 10+ employees
 
 FIELDS = [
     "siret",
+    "siren",
     "denominationUniteLegale",
-    "adresseEtablissement",
+    "numeroVoieEtablissement",
+    "typeVoieEtablissement",
+    "libelleVoieEtablissement",
     "codePostalEtablissement",
     "libelleCommuneEtablissement",
     "activitePrincipaleEtablissement",
@@ -559,15 +562,29 @@ def matches_keyword(name):
     return any(kw in upper for kw in KEYWORDS)
 
 
+def _get_field(rec, field):
+    """Get a field that may be at top level or nested under adresseEtablissement."""
+    val = rec.get(field)
+    if val:
+        return val
+    addr = rec.get("adresseEtablissement")
+    if isinstance(addr, dict):
+        return addr.get(field, "")
+    return ""
+
+
 def build_address(rec):
     """Concatenate address sub-fields into a single string."""
-    addr = rec.get("adresseEtablissement") or {}
-    if isinstance(addr, str):
-        return addr
+    # API v3.11 may nest address fields under adresseEtablissement or flatten them
+    addr = rec.get("adresseEtablissement")
+    if isinstance(addr, dict):
+        src = addr
+    else:
+        src = rec
     parts = [
-        addr.get("numeroVoieEtablissement", ""),
-        addr.get("typeVoieEtablissement", ""),
-        addr.get("libelleVoieEtablissement", ""),
+        src.get("numeroVoieEtablissement", ""),
+        src.get("typeVoieEtablissement", ""),
+        src.get("libelleVoieEtablissement", ""),
     ]
     return " ".join(p for p in parts if p).strip()
 
@@ -1009,16 +1026,8 @@ def enrich_omni_retailers():
                     row["size_band"] = rec.get("trancheEffectifsEtablissement", "")
                     row["status"] = rec.get("etatAdministratifEtablissement", "")
                     row["address"] = build_address(rec)
-                    row["postcode"] = (
-                        rec.get("codePostalEtablissement")
-                        or (rec.get("adresseEtablissement") or {})
-                           .get("codePostalEtablissement", "")
-                    )
-                    row["city"] = (
-                        rec.get("libelleCommuneEtablissement")
-                        or (rec.get("adresseEtablissement") or {})
-                           .get("libelleCommuneEtablissement", "")
-                    )
+                    row["postcode"] = _get_field(rec, "codePostalEtablissement")
+                    row["city"] = _get_field(rec, "libelleCommuneEtablissement")
                     print(f"  [SIRENE] {entry['name']}: found (SIRET {row['siret']}, "
                           f"APE {row['ape_code']})")
                 else:
@@ -1154,16 +1163,8 @@ def main():
                 "channel": channel,
                 "ape_code": ape_code,
                 "address": build_address(rec),
-                "postcode": (
-                    rec.get("codePostalEtablissement")
-                    or (rec.get("adresseEtablissement") or {})
-                       .get("codePostalEtablissement", "")
-                ),
-                "city": (
-                    rec.get("libelleCommuneEtablissement")
-                    or (rec.get("adresseEtablissement") or {})
-                       .get("libelleCommuneEtablissement", "")
-                ),
+                "postcode": _get_field(rec, "codePostalEtablissement"),
+                "city": _get_field(rec, "libelleCommuneEtablissement"),
                 "size_band": rec.get("trancheEffectifsEtablissement", ""),
             }
             all_rows.append(row)
