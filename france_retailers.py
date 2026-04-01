@@ -1603,7 +1603,7 @@ def main():
         # One sheet per channel
         for ch in channel_names:
             if ch in channel_dfs:
-                sheet_name = ch[:31]  # Excel sheet name max 31 chars
+                sheet_name = ch.replace("/", "-")[:31]  # / invalid in Excel
                 channel_dfs[ch].to_excel(writer, index=False, sheet_name=sheet_name)
 
         # Combined sheet with all retailers
