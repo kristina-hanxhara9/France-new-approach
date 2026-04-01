@@ -633,20 +633,16 @@ def setup_sirene_auth():
     """
     global _sirene_headers
 
-    # Option A: direct API key (Simple or Machine-to-machine app key)
+    # Option A: direct API key (from portal app page)
     if SIRENE_API_KEY:
-        # The new portal uses X-INSEE-Api-Key-Integration header.
-        # We send multiple header variants to maximize compatibility.
         _sirene_headers = {
             "Accept": "application/json",
             "X-INSEE-Api-Key-Integration": SIRENE_API_KEY,
-            "X-Gravitee-Api-Key": SIRENE_API_KEY,
-            "Authorization": f"Bearer {SIRENE_API_KEY}",
         }
-        print("  [INSEE] Using API key directly")
+        print("  [INSEE] Using API key (X-INSEE-Api-Key-Integration)")
         return True
 
-    # Option B: client_id + client_secret → generate token
+    # Option B: client_id + client_secret → generate token, use as API key
     if SIRENE_CLIENT_ID and SIRENE_CLIENT_SECRET:
         print("  [INSEE] Generating token from client_id + client_secret …")
         token = _try_token_generation()
@@ -654,12 +650,15 @@ def setup_sirene_auth():
             _sirene_headers = {
                 "Accept": "application/json",
                 "X-INSEE-Api-Key-Integration": token,
-                "Authorization": f"Bearer {token}",
             }
             return True
-        print("  [INSEE] Token generation failed on all endpoints.")
-        print("  [INSEE] Try putting your client_secret as SIRENE_API_KEY instead.")
-        return False
+        # If token generation fails, try using client_secret directly as key
+        print("  [INSEE] Token generation failed. Trying client_secret as API key …")
+        _sirene_headers = {
+            "Accept": "application/json",
+            "X-INSEE-Api-Key-Integration": SIRENE_CLIENT_SECRET,
+        }
+        return True
 
     return False
 
@@ -683,7 +682,7 @@ def fetch_all_for_code(ape_code):
 
     while True:
         params = {**params_base, "debut": debut}
-        time.sleep(1)
+        time.sleep(2)  # 30 req/min limit on new portal
         resp = http.get(BASE_URL, headers=headers, params=params, timeout=30)
 
         if resp.status_code != 200:
@@ -993,7 +992,7 @@ def enrich_omni_retailers():
             rows.append(row)
             continue
         try:
-            time.sleep(1)
+            time.sleep(2)  # 30 req/min limit on new portal
             params = {
                 "q": f"siren:{siren} AND etatAdministratifEtablissement:A",
                 "nombre": 1,
