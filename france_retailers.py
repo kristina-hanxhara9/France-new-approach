@@ -65,17 +65,16 @@ DATA_NOTICE = (
 # CONFIGURATION — reads from .env file or environment variables
 # ---------------------------------------------------------------------------
 
-# INSEE SIRENE — provide your client ID and secret from api.insee.fr.
-# The script automatically generates a Bearer token from these.
-SIRENE_CLIENT_ID = os.environ.get("SIRENE_CLIENT_ID", "")
-SIRENE_CLIENT_SECRET = os.environ.get("SIRENE_CLIENT_SECRET", "")
+# INSEE SIRENE — get your API key from https://portail-api.insee.fr
+# 1. Create an account on portail-api.insee.fr
+# 2. Subscribe to the API Sirene
+# 3. Copy your API key from your application page
+# That's it — no token generation needed. The key is used directly.
+SIRENE_API_KEY = os.environ.get("SIRENE_API_KEY", "")
 
 # INPI — optional, for actual turnover data
 INPI_USERNAME = os.environ.get("INPI_USERNAME", "")
 INPI_PASSWORD = os.environ.get("INPI_PASSWORD", "")
-
-# This gets filled automatically — do not set manually
-BEARER_TOKEN = ""
 
 APE_CODES = {
     "47.78C": "Photo",
@@ -583,36 +582,9 @@ def classify_retailer_type(name_upper, siren, siren_counts):
     return "Independent"
 
 
-def generate_bearer_token():
-    """
-    Exchange INSEE client ID + secret for a Bearer token.
-    This is the standard OAuth2 client_credentials flow.
-    Returns the token string, or None on failure.
-    """
-    if not SIRENE_CLIENT_ID or not SIRENE_CLIENT_SECRET:
-        return None
-    try:
-        resp = http.post(
-            "https://api.insee.fr/token",
-            data={"grant_type": "client_credentials"},
-            auth=(SIRENE_CLIENT_ID, SIRENE_CLIENT_SECRET),
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            token = resp.json().get("access_token")
-            if token:
-                print("  [INSEE] Bearer token generated successfully.")
-                return token
-        print(f"  [INSEE] Token generation failed: HTTP {resp.status_code} — "
-              f"{resp.text[:200]}")
-    except Exception as exc:
-        print(f"  [INSEE] Token generation error: {exc}")
-    return None
-
-
 def fetch_all_for_code(ape_code):
     """Paginate through SIRENE API for a single APE code. Returns (records, total)."""
-    headers = {"Authorization": f"Bearer {BEARER_TOKEN}", "Accept": "application/json"}
+    headers = {"Authorization": f"Bearer {SIRENE_API_KEY}", "Accept": "application/json"}
     page_size = TEST_LIMIT if TEST_MODE else PAGE_SIZE
     params_base = {
         "q": (
@@ -912,7 +884,7 @@ def enrich_omni_retailers():
         print("\n--- Online & omni-channel retailers (static only, TEST MODE) ---")
     else:
         print("\n--- Enriching online & omni-channel retailers via SIRENE ---")
-    headers = {"Authorization": f"Bearer {BEARER_TOKEN}", "Accept": "application/json"}
+    headers = {"Authorization": f"Bearer {SIRENE_API_KEY}", "Accept": "application/json"}
     rows = []
 
     for entry in MAJOR_ONLINE_OMNI_RETAILERS:
@@ -1007,12 +979,19 @@ def format_turnover(value):
 
 
 def main():
-    global BEARER_TOKEN
-
-    if not SIRENE_CLIENT_ID or not SIRENE_CLIENT_SECRET:
-        print("ERROR: Set SIRENE_CLIENT_ID and SIRENE_CLIENT_SECRET in your .env file.")
-        print("       Get them at https://api.insee.fr → create an application.")
+    if not SIRENE_API_KEY:
+        print("ERROR: Set SIRENE_API_KEY in your .env file.")
+        print()
+        print("  How to get it:")
+        print("  1. Go to https://portail-api.insee.fr")
+        print("  2. Create an account (free)")
+        print("  3. Subscribe to the API Sirene")
+        print("  4. Copy the API key from your application page")
+        print("  5. Paste it in your .env file as: SIRENE_API_KEY=your_key_here")
         return
+
+    # Check SSL before any API calls
+    _test_ssl()
 
     print(f"\n{'='*60}")
     print(DATA_NOTICE)
@@ -1020,16 +999,6 @@ def main():
         print(f"\n  *** TEST MODE: fetching {TEST_LIMIT} records per APE code ***")
         print(f"  *** BODACC and INPI turnover lookups skipped ***")
     print(f"{'='*60}\n")
-
-    # Auto-generate Bearer token from client credentials
-    # Check SSL before any API calls
-    _test_ssl()
-
-    print("Generating INSEE API token …")
-    BEARER_TOKEN = generate_bearer_token()
-    if not BEARER_TOKEN:
-        print("ERROR: Could not generate Bearer token. Check your client ID/secret.")
-        return
 
     # =====================================================================
     # PHASE 1 — Fetch & filter from SIRENE
