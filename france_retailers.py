@@ -690,7 +690,6 @@ def fetch_all_for_code(ape_code):
             f"AND etatAdministratifEtablissement:A"
         ),
         "nombre": page_size,
-        "champs": ",".join(FIELDS),
     }
 
     records = []
@@ -1013,7 +1012,6 @@ def enrich_omni_retailers():
             params = {
                 "q": f"siren:{siren} AND etatAdministratifEtablissement:A",
                 "nombre": 1,
-                "champs": ",".join(FIELDS),
             }
             resp = http.get(BASE_URL, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
