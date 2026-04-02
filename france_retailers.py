@@ -87,15 +87,22 @@ SIRENE_CLIENT_SECRET = os.environ.get("SIRENE_CLIENT_SECRET", "")
 INPI_USERNAME = os.environ.get("INPI_USERNAME", "")
 INPI_PASSWORD = os.environ.get("INPI_PASSWORD", "")
 
+# Note: APE_CODES maps one code to one primary channel. 47.54Z covers both
+# MDA and SDA — we assign it to MDA here and add SDA via the known retailers
+# name search + an extra query below.
 APE_CODES = {
     "47.78C": "Photo",
     "47.43Z": "CE",
     "47.41Z": "CE",
-    "47.54Z": "MDA/SDA",
+    "47.54Z": "MDA",
     "47.42Z": "Mobile",
-    "47.59B": "Accessories",
+    "47.59B": "Phone Accessories",
     "95.11Z": "Refurb",
     "95.12Z": "Refurb",
+}
+# Extra: same APE code mapped to additional channels
+APE_CODES_EXTRA = {
+    "47.54Z": "SDA",  # same code as MDA — appliance stores sell both
 }
 
 # ---------------------------------------------------------------------------
@@ -125,15 +132,28 @@ CHANNEL_KEYWORDS = {
         ],
         "mode": "loose",
     },
-    "MDA/SDA": {
+    "MDA": {
         "keywords": [
             "ELECTROMENAGER", "ELECTRO MENAGER", "MENAGER", "DARTY",
-            "BOULANGER", "BUT ", "BUT-", "CONFORAMA", "CUISINE",
-            "CUISSON", "LAVE", "FRIGO", "REFRIGER", "CONGELAT",
-            "ASPIRAT", "CAFETIERE", "ROBOT", "KENWOOD", "MOULINEX",
-            "BOSCH", "WHIRLPOOL", "ELECTROLUX", "MIELE", "SIEMENS",
-            "SMEG", "KITCHENAID", "DYSON", "SEB ", "DELONGHI",
-            "BRANDT", "VEDETTE", "CANDY", "HAIER", "HISENSE",
+            "BOULANGER", "BUT ", "BUT-", "CONFORAMA",
+            "LAVE", "FRIGO", "REFRIGER", "CONGELAT", "FOUR",
+            "CUISSON", "HOTTE", "SECHE", "LAVE-VAISSELLE",
+            "WHIRLPOOL", "ELECTROLUX", "MIELE", "SIEMENS", "BOSCH",
+            "BRANDT", "VEDETTE", "CANDY", "HAIER", "HISENSE", "BEKO",
+            "SAMSUNG", "LG ", "INDESIT",
+            "EXPERT", "GITEM", "PULSAT", "EURONICS", "PRO & CIE",
+        ],
+        "mode": "loose",
+    },
+    "SDA": {
+        "keywords": [
+            "ELECTROMENAGER", "ELECTRO MENAGER", "MENAGER", "DARTY",
+            "BOULANGER", "FNAC",
+            "ASPIRAT", "CAFETIERE", "ROBOT", "MIXEUR", "BLENDER",
+            "BOUILLOIRE", "GRILLE-PAIN", "FER A REPASSER",
+            "KENWOOD", "MOULINEX", "SEB ", "DELONGHI", "KRUPS",
+            "KITCHENAID", "DYSON", "SMEG", "PHILIPS", "BRAUN",
+            "ROWENTA", "TEFAL", "MAGIMIX", "NESPRESSO",
             "EXPERT", "GITEM", "PULSAT", "EURONICS", "PRO & CIE",
         ],
         "mode": "loose",
@@ -148,15 +168,16 @@ CHANNEL_KEYWORDS = {
         ],
         "mode": "loose",
     },
-    "Accessories": {
+    "Phone Accessories": {
         "keywords": [
             "ACCESSOIRE", "COQUE", "PROTECTION", "CHARGEUR", "CABLE",
             "ECOUTEUR", "CASQUE", "ENCEINTE", "BATTERIE", "ETUI",
-            "SUPPORT", "HOLDER", "SCREEN", "FILM", "VERRE TREMPE",
-            "RHINOSHIELD", "BELKIN", "ANKER", "FNAC", "DARTY",
-            "BOULANGER", "LICK", "MOBILIZE",
+            "TELEPHON", "MOBILE", "SMARTPHONE", "PHONE",
+            "VERRE TREMPE", "FILM PROTEC",
+            "RHINOSHIELD", "BELKIN", "ANKER", "LICK", "MOBILIZE",
+            "FNAC", "DARTY", "BOULANGER",
         ],
-        "mode": "strict",  # 47.59B is very broad
+        "mode": "strict",  # 47.59B is very broad — must match phone keywords
     },
     "Refurb": {
         "keywords": [
@@ -197,13 +218,22 @@ CHANNEL_KNOWN_RETAILERS = {
             "PRO & CIE", "CONNEXION",
         ],
     },
-    "MDA/SDA": {
+    "MDA": {
         "chains": [
             "DARTY", "BOULANGER", "BUT", "CONFORAMA", "ELECTRO DEPOT",
         ],
         "buying_groups": [
             "EXPERT", "EURONICS", "GITEM", "PULSAT",
             "PRO & CIE", "CONNEXION", "MENAGER PLUS",
+        ],
+    },
+    "SDA": {
+        "chains": [
+            "DARTY", "BOULANGER", "FNAC",
+        ],
+        "buying_groups": [
+            "EXPERT", "EURONICS", "GITEM", "PULSAT",
+            "PRO & CIE", "CONNEXION",
         ],
     },
     "Mobile": {
@@ -214,7 +244,7 @@ CHANNEL_KNOWN_RETAILERS = {
         ],
         "buying_groups": [],
     },
-    "Accessories": {
+    "Phone Accessories": {
         "chains": [
             "FNAC", "DARTY", "BOULANGER", "LICK",
         ],
@@ -264,7 +294,7 @@ APE_DESCRIPTIONS = {
         "fr": "Commerce de détail d'appareils électroménagers en magasin spécialisé",
         "en": "Retail sale of electrical household appliances in specialised stores",
         "sv": "Specialiserad detaljhandel med hushållsapparater",
-        "channel": "MDA/SDA",
+        "channel": "MDA + SDA",
         "queried": True,
     },
     "47.42Z": {
@@ -278,7 +308,7 @@ APE_DESCRIPTIONS = {
         "fr": "Commerce de détail d'autres équipements du foyer",
         "en": "Retail sale of other household equipment not elsewhere classified",
         "sv": "Detaljhandel med övrig hushållsutrustning",
-        "channel": "Accessories",
+        "channel": "Phone Accessories",
         "queried": True,
     },
     "95.11Z": {
@@ -424,9 +454,11 @@ def _write_styled_overview(wb):
     _title("French Retailer Database — Overview & Methodology")
 
     _section("What is this file?")
-    _row("", "This Excel file contains a database of French retailers across 6 channels: "
-         "Photo, CE (consumer electronics), MDA/SDA (appliances), Mobile, Accessories, "
-         "and Refurb (refurbished/repair). Data comes from official French government registries.")
+    _row("", "This Excel file contains a database of French retailers across 7 channels: "
+         "Photo, CE (consumer electronics), MDA (major domestic appliances), SDA (small "
+         "domestic appliances), Mobile, Phone Accessories, and Refurb (refurbished/repair). "
+         "Data comes from official French government registries. Includes chains, buying "
+         "groups, AND independent retailers.")
 
     _section("Data Sources")
     _table(
@@ -459,22 +491,23 @@ def _write_styled_overview(wb):
             ["Photo", "47.78C", "Other specialised retail (photo, optical, precision)"],
             ["CE", "47.43Z", "Audio and video equipment in specialised stores"],
             ["CE", "47.41Z", "Computers, peripherals, and software in specialised stores"],
-            ["MDA/SDA", "47.54Z", "Electrical household appliances in specialised stores"],
+            ["MDA", "47.54Z", "Electrical household appliances in specialised stores"],
+            ["SDA", "47.54Z", "Same code as MDA — appliance stores sell both"],
             ["Mobile", "47.42Z", "Telecommunications equipment in specialised stores"],
-            ["Accessories", "47.59B", "Other specialised retail not elsewhere classified"],
+            ["Phone Accessories", "47.59B", "Other specialised retail not elsewhere classified"],
             ["Refurb", "95.11Z", "Repair of computers and peripheral equipment"],
             ["Refurb", "95.12Z", "Repair of communication equipment"],
         ],
     )
 
-    _section("Confidence Column (colour-coded rows)")
-    _row("High", "Company name matches channel-specific keywords (e.g., PHOTO, CAMARA, "
-         "NIKON for Photo) OR is a known chain/buying group. Very likely relevant.",
-         green_font, green_fill)
-    _row("Medium", "Correct APE code and 10+ employees, but name does not contain channel "
-         "keywords. Probably relevant — registered under the right activity — but may include "
-         "some false positives. Worth a quick manual check.",
-         yellow_font, yellow_fill)
+    _section("Confidence Column")
+    _row("High", "APE code matches + company name contains channel keywords + known "
+         "retailer + employer. Score >= 70. Very likely relevant.")
+    _row("Medium", "APE code matches + some positive signals but no keyword match. "
+         "Score 45-69. Probably relevant, worth a quick check.")
+    _row("Low", "Weak signals. Score < 45. May not be relevant to this channel.")
+    _row("", "Scoring: APE code match +40, keyword match +30, known chain/buying "
+         "group +20, established company (PME/ETI/GE) +5, employer +5. Max 100.")
     _row("", "Tip: sort or filter by the 'confidence' column to prioritise your review.")
 
     _section("Channel Definitions")
@@ -484,12 +517,14 @@ def _write_styled_overview(wb):
             ["Photo", "Specialist photography equipment", "Phox, Camara, photo labs"],
             ["CE", "Consumer electronics: TVs, audio, computers, peripherals",
              "Fnac, Darty, Boulanger, LDLC"],
-            ["MDA/SDA", "Major appliances (washing machines, fridges) and small appliances "
-             "(kettles, coffee machines)", "Darty, Boulanger, But, Conforama"],
+            ["MDA", "Major domestic appliances: washing machines, fridges, ovens, "
+             "dishwashers", "Darty, Boulanger, But, Conforama"],
+            ["SDA", "Small domestic appliances: kettles, coffee machines, irons, "
+             "vacuum cleaners, food processors", "Darty, Boulanger, Fnac"],
             ["Mobile", "Mobile phone specialist retailers and operator stores",
              "Orange, SFR, Bouygues, Apple"],
-            ["Accessories", "Phone cases, cables, chargers, screen protectors",
-             "Lick, Fnac accessories"],
+            ["Phone Accessories", "Phone cases, cables, chargers, screen protectors, "
+             "earbuds", "Lick, Fnac, Darty"],
             ["Refurb", "Refurbished, repaired, and second-hand electronics",
              "Back Market, Cash Converters, Easy Cash"],
         ],
@@ -520,12 +555,14 @@ def _write_styled_overview(wb):
             ["trade_name", "Brand/trade name shown on the shop (enseigne)"],
             ["is_hq", "Whether this establishment is the company headquarters (siege)"],
             ["channel", "Which product channel(s) this retailer belongs to"],
-            ["confidence", "How certain this retailer belongs to the channel (High/Medium)"],
+            ["confidence", "How certain this retailer belongs to the channel (High/Medium/Low)"],
             ["retailer_type", "Chain, Buying Group, or Independent"],
             ["ape_code", "APE activity code for this establishment"],
             ["ape_code_company", "APE activity code at the parent company level"],
-            ["size_band", "Employee count band for this establishment"],
-            ["size_band_company", "Employee count band for the entire company"],
+            ["employees_estab", "Employee count range for this establishment (e.g., 10-19)"],
+            ["employees_company", "Employee count range for the entire company"],
+            ["size_band", "INSEE employee band code for this establishment"],
+            ["size_band_company", "INSEE employee band code for the entire company"],
             ["company_category", "PME (small/medium), ETI (mid-cap), or GE (large enterprise)"],
             ["legal_form_code", "Legal form code (e.g., 5710=SAS, 5499=SARL, 1000=Sole trader)"],
             ["is_employer", "Whether the establishment is an employer (O=Yes, N=No)"],
@@ -544,8 +581,12 @@ def _write_styled_overview(wb):
     _row("turnover_actual", "Real chiffre d'affaires from INPI annual accounts. "
          "This is what the company declared. Not available for all — some file as "
          "confidential, some are too small to file.")
-    _row("turnover_est_range", "Rough estimate based on employee count when no real "
-         "figure is available. E.g., 10-19 employees ~ €1M-€5M. Directional only.")
+    _row("turnover_est_range", "Estimated turnover range when no real figure is available. "
+         "Uses company-level employee band first, then establishment band, and refines "
+         "with company_category (GE = €500M+, ETI = €50M-€500M, PME = €2M-€50M).")
+    _row("", "The company_category field from SIRENE helps narrow the estimate: "
+         "GE (Grande Entreprise) = large enterprise, ETI = mid-cap, PME = small/medium. "
+         "Combined with employee count, this gives a better range than headcount alone.")
 
     _section("Online & Omni Retail Sheet")
     _row("", "Major e-commerce and hypermarket retailers that sell CE/MDA/Mobile but "
@@ -616,6 +657,26 @@ SIZE_BANDS = [
     "11", "12", "21", "22", "31", "32",
     "41", "42", "51", "52", "53",
 ]
+
+# Human-readable employee count ranges per band code
+SIZE_BAND_LABELS = {
+    "NN": "Unknown",
+    "00": "0 (non-employer)",
+    "01": "1-2",
+    "02": "3-5",
+    "03": "6-9",
+    "11": "10-19",
+    "12": "20-49",
+    "21": "50-99",
+    "22": "100-199",
+    "31": "200-249",
+    "32": "250-499",
+    "41": "500-999",
+    "42": "1,000-1,999",
+    "51": "2,000-4,999",
+    "52": "5,000-9,999",
+    "53": "10,000+",
+}
 
 # ---------------------------------------------------------------------------
 # TURNOVER ENRICHMENT CONFIGURATION
@@ -871,6 +932,42 @@ def _flatten_record(rec):
     return flat
 
 
+def _calc_confidence(name, channel, ape_code, is_known_retailer=False,
+                     retailer_type="", cat_entreprise="", is_employer=""):
+    """Calculate a confidence level that this establishment belongs to the channel.
+
+    Scoring (internal, mapped to High/Medium/Low):
+      +40  APE code matches the channel (base — they registered under this code)
+      +30  Company name matches channel-specific keywords
+      +20  Known chain or buying group for this channel
+      +5   Company category is PME/ETI/GE (established business)
+      +5   Is an employer (has employees on record)
+
+    Returns: "High" (>=70), "Medium" (>=45), or "Low" (<45).
+    """
+    score = 0
+    # Base: APE code assigned to this channel
+    if ape_code in APE_CODES or ape_code in APE_CODES_EXTRA:
+        score += 40
+    # Keyword match
+    if matches_keyword(name, channel=channel):
+        score += 30
+    # Known retailer
+    if is_known_retailer:
+        score += 20
+    # Established business signals
+    if cat_entreprise in ("PME", "ETI", "GE"):
+        score += 5
+    if is_employer in ("O", "true", True):
+        score += 5
+    score = min(score, 100)
+    if score >= 70:
+        return "High"
+    if score >= 45:
+        return "Medium"
+    return "Low"
+
+
 def _get_field(rec, field):
     """Get a field that may be at top level or nested under adresseEtablissement."""
     val = rec.get(field)
@@ -937,7 +1034,9 @@ def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type=""):
         "postcode": _get_field(rec, "codePostalEtablissement"),
         "city": _get_field(rec, "libelleCommuneEtablissement"),
         "size_band": size_band_etab,
+        "employees_estab": SIZE_BAND_LABELS.get(size_band_etab, size_band_etab),
         "size_band_company": size_band_ul,
+        "employees_company": SIZE_BAND_LABELS.get(size_band_ul, size_band_ul),
         "company_category": cat_entreprise,
         "legal_form_code": cat_juridique,
         "is_employer": is_employer,
@@ -946,15 +1045,6 @@ def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type=""):
         "retailer_type": retailer_type,
         "confidence": confidence,
     }
-
-    """Get a field that may be at top level or nested under adresseEtablissement."""
-    val = rec.get(field)
-    if val:
-        return val
-    addr = rec.get("adresseEtablissement")
-    if isinstance(addr, dict):
-        return addr.get(field, "")
-    return ""
 
 
 def build_address(rec):
@@ -1291,8 +1381,10 @@ def load_turnover_data(sirens_needed):
     Try each turnover source in priority order for the given SIRENs.
     Returns dict: siren -> {turnover_eur, year, source}.
     """
-    if SKIP_TURNOVER_API or TEST_MODE:
+    if SKIP_TURNOVER_API:
         return {}
+    # In test mode, still try INPI but cap to 10 lookups
+    max_lookups = 10 if TEST_MODE else len(sirens_needed)
 
     turnover_map = {}
     sirens_remaining = set(sirens_needed)
@@ -1302,9 +1394,10 @@ def load_turnover_data(sirens_needed):
         print("\n--- Turnover enrichment: INPI API ---")
         token = _inpi_authenticate()
         if token:
-            print(f"  [INPI] Authenticated. Querying {len(sirens_remaining)} SIRENs …")
+            to_query = list(sirens_remaining)[:max_lookups]
+            print(f"  [INPI] Authenticated. Querying {len(to_query)} SIRENs …")
             done = 0
-            for siren in list(sirens_remaining):
+            for siren in to_query:
                 ca, year = _inpi_get_turnover(siren, token)
                 if ca and ca > 0:
                     turnover_map[siren] = {
@@ -1381,7 +1474,7 @@ def check_bodacc_filing(siren):
 
 def enrich_bodacc(df):
     """Add BODACC filing status columns to the DataFrame."""
-    if SKIP_BODACC or TEST_MODE:
+    if SKIP_BODACC:
         df["bodacc_filing"] = ""
         df["bodacc_last_date"] = ""
         return df
@@ -1547,7 +1640,7 @@ def main():
     print(DATA_NOTICE)
     if TEST_MODE:
         print(f"\n  *** TEST MODE: fetching {TEST_LIMIT} records per APE code ***")
-        print(f"  *** BODACC and INPI turnover lookups skipped ***")
+        print(f"  *** INPI turnover capped to 10 lookups ***")
     print(f"{'='*60}\n")
 
     # Set up SIRENE authentication
@@ -1593,31 +1686,44 @@ def main():
 
         print(f"  Active: {len(active)}, with size >= {SIZE_MIN}: {len(sized)}")
 
-        # NO keyword filtering — keep all. Confidence is assigned instead.
+        # NO keyword filtering — keep all. Confidence % is assigned instead.
         for rec in sized:
             ul = rec.get("uniteLegale") or {}
             name = (
                 rec.get("denominationUniteLegale")
                 or ul.get("denominationUniteLegale", "")
             )
-            has_keyword = matches_keyword(name, channel=channel)
-            confidence = "High" if has_keyword else "Medium"
+            cat_e = rec.get("categorieEntreprise") or ul.get("categorieEntreprise", "")
+            is_emp = rec.get("caractereEmployeurEtablissement", "")
+            conf_pct = _calc_confidence(name, channel, ape_code,
+                                        cat_entreprise=cat_e, is_employer=is_emp)
 
-            row = _extract_row(rec, channel, ape_code, confidence)
+            row = _extract_row(rec, channel, ape_code, confidence=conf_pct)
             siret = row["siret"]
             seen_sirets.add(siret)
             all_rows.append(row)
 
-        kw_count = sum(
-            1 for r in sized
-            if matches_keyword(
-                r.get("denominationUniteLegale")
-                or (r.get("uniteLegale") or {}).get("denominationUniteLegale", ""),
-                channel=channel,
-            )
-        )
-        print(f"  Kept {len(sized)} records ({kw_count} High confidence, "
-              f"{len(sized) - kw_count} Medium confidence)")
+        high = sum(1 for r in all_rows[-len(sized):] if r["confidence"] == "High")
+        print(f"  Kept {len(sized)} records ({high} High confidence)")
+
+    # Process extra APE code -> channel mappings (e.g., 47.54Z -> SDA)
+    for ape_code, channel in APE_CODES_EXTRA.items():
+        print(f"\n  Extra: assigning APE {ape_code} also to {channel} …")
+        # Find records already fetched for this APE code and duplicate for the extra channel
+        added = 0
+        for existing in list(all_rows):
+            if existing["ape_code"] == ape_code and existing["channel"] != channel:
+                dup = dict(existing)
+                dup["channel"] = channel
+                # Recalculate confidence for the new channel
+                dup["confidence"] = _calc_confidence(
+                    dup["legal_name"], channel, ape_code,
+                    cat_entreprise=dup.get("company_category", ""),
+                    is_employer=dup.get("is_employer", ""),
+                )
+                all_rows.append(dup)
+                added += 1
+        print(f"    Added {added} records to {channel}")
 
     # =====================================================================
     # PHASE 1b — Search known chains & buying groups per channel
@@ -1625,7 +1731,8 @@ def main():
     print("\n" + "=" * 60)
     print("Searching for known retailers by name …")
     print("=" * 60)
-    for channel in sorted(set(APE_CODES.values())):
+    all_channels = sorted(set(list(APE_CODES.values()) + list(APE_CODES_EXTRA.values())))
+    for channel in all_channels:
         print(f"\n  [{channel}] known retailers:")
         known_results = fetch_known_retailers_for_channel(channel)
         added = 0
@@ -1633,14 +1740,22 @@ def main():
             rec = _flatten_record(rec)
             siret = rec.get("siret", "")
             if siret in seen_sirets:
-                # Already found — upgrade its confidence to High
+                # Already found — upgrade its confidence
                 for existing in all_rows:
-                    if existing["siret"] == siret:
+                    if existing["siret"] == siret and existing["channel"] == channel:
                         existing["confidence"] = "High"
                         if not existing["retailer_type"]:
                             existing["retailer_type"] = rtype
                 continue
-            row = _extract_row(rec, channel, "", "High", rtype)
+            ul = rec.get("uniteLegale") or {}
+            name = rec.get("denominationUniteLegale") or ul.get("denominationUniteLegale", "")
+            ape = rec.get("activitePrincipaleEtablissement", "")
+            cat_e = rec.get("categorieEntreprise") or ul.get("categorieEntreprise", "")
+            is_emp = rec.get("caractereEmployeurEtablissement", "")
+            conf_pct = _calc_confidence(name, channel, ape, is_known_retailer=True,
+                                         retailer_type=rtype, cat_entreprise=cat_e,
+                                         is_employer=is_emp)
+            row = _extract_row(rec, channel, "", conf_pct, rtype)
             seen_sirets.add(siret)
             all_rows.append(row)
             added += 1
@@ -1678,9 +1793,14 @@ def main():
         result = group.iloc[0].copy()
         result["channel"] = " | ".join(channels)
         result["ape_code"] = " | ".join(ape_codes)
-        # Keep best confidence (High > Medium)
-        if "High" in group["confidence"].values:
+        # Keep best confidence level (High > Medium > Low)
+        conf_vals = group["confidence"].values
+        if "High" in conf_vals:
             result["confidence"] = "High"
+        elif "Medium" in conf_vals:
+            result["confidence"] = "Medium"
+        else:
+            result["confidence"] = "Low"
         return result
 
     df = (
@@ -1713,11 +1833,27 @@ def main():
                     else "",
         axis=1,
     )
-    df["turnover_estimate"] = df.apply(
-        lambda row: TURNOVER_ESTIMATE_BY_BAND.get(row["size_band"], "")
-                    if not row["turnover_display"]
-                    else "",
-        axis=1,
+
+    def _estimate_turnover(row):
+        """Better estimate using size_band + company_category + size_band_company."""
+        if row.get("turnover_display"):
+            return ""  # already have actual data
+        # Try company-level band first (bigger picture), fall back to establishment
+        band = row.get("size_band_company") or row.get("size_band", "")
+        est = TURNOVER_ESTIMATE_BY_BAND.get(band, "")
+        if not est:
+            est = TURNOVER_ESTIMATE_BY_BAND.get(row.get("size_band", ""), "")
+        # Refine with company category
+        cat = row.get("company_category", "")
+        if cat == "GE" and not est:
+            est = "€500M+"
+        elif cat == "ETI" and not est:
+            est = "€50M – €500M"
+        elif cat == "PME" and not est:
+            est = "€2M – €50M"
+        return est
+
+    df["turnover_estimate"] = df.apply(_estimate_turnover, axis=1,
     )
     df["turnover_source"] = df.apply(
         lambda row: row["turnover_source"]
@@ -1745,6 +1881,7 @@ def main():
         "channel", "confidence", "retailer_type",
         "ape_code", "ape_code_company",
         "address", "postcode", "city",
+        "employees_estab", "employees_company",
         "size_band", "size_band_company", "company_category",
         "legal_form_code", "is_employer",
         "date_created_estab", "date_created_company",
@@ -1763,9 +1900,9 @@ def main():
             df[col] = ""
     df = df[output_cols]
 
-    # Sort: High confidence first within each channel
+    # Sort: highest confidence first within each channel
     df = df.sort_values(["channel", "confidence", "legal_name"],
-                        ascending=[True, True, True]).reset_index(drop=True)
+                        ascending=[True, False, True]).reset_index(drop=True)
 
     # Build per-channel DataFrames.  A retailer tagged "CE | Photo" appears
     # in both the CE sheet and the Photo sheet.
@@ -1841,40 +1978,12 @@ def main():
         meta.to_excel(writer, index=False, sheet_name="Metadata")
 
     # -----------------------------------------------------------------
-    # Add styled overview sheet & conditional formatting
+    # Add styled overview sheet
     # -----------------------------------------------------------------
     from openpyxl import load_workbook
-    from openpyxl.styles import PatternFill, Font
 
     wb = load_workbook(output_file)
-
-    # Styled overview sheet
     _write_styled_overview(wb)
-
-    # Conditional formatting: green = High, yellow = Medium
-    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    green_font = Font(color="006100")
-    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-    yellow_font = Font(color="9C6500")
-
-    conf_idx = output_cols.index("confidence")  # 0-based position in output_cols
-
-    sheets_to_format = list(channel_dfs.keys()) + ["All Retailers"]
-    for sheet_name in sheets_to_format:
-        if sheet_name not in wb.sheetnames:
-            continue
-        ws = wb[sheet_name]
-        for row_cells in ws.iter_rows(min_row=2, max_row=ws.max_row):
-            conf_cell = row_cells[conf_idx]
-            val = conf_cell.value
-            if val == "High":
-                for cell in row_cells:
-                    cell.fill = green_fill
-                    cell.font = green_font
-            elif val == "Medium":
-                for cell in row_cells:
-                    cell.fill = yellow_fill
-                    cell.font = yellow_font
 
     wb.save(output_file)
     wb.close()
