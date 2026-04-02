@@ -871,6 +871,17 @@ def _flatten_record(rec):
     return flat
 
 
+def _get_field(rec, field):
+    """Get a field that may be at top level or nested under adresseEtablissement."""
+    val = rec.get(field)
+    if val:
+        return val
+    addr = rec.get("adresseEtablissement")
+    if isinstance(addr, dict):
+        return addr.get(field, "")
+    return ""
+
+
 def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type=""):
     """Extract all useful fields from a flattened SIRENE record into a row dict."""
     ul = rec.get("uniteLegale") or {}
