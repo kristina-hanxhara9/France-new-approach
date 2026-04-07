@@ -128,7 +128,7 @@ CHANNEL_KEYWORDS = {
             "MULTIMEDIA", "HI-FI", "HIFI", "AUDIO", "VIDEO", "SONO",
             "INFORMATIQUE", "ORDINATEUR", "COMPUTER", "NUMERIQUE",
             "DIGITAL", "MICROMANIA", "CULTURA", "LDLC", "MATERIEL",
-            "SAMSUNG", "LG ", "HUBSIDE", "LICK", "TV ", "TELE",
+            "LICK", "TV ", "TELE",
         ],
         "mode": "loose",
     },
@@ -161,10 +161,8 @@ CHANNEL_KEYWORDS = {
     "Mobile": {
         "keywords": [
             "TELEPHON", "MOBILE", "SMARTPHONE", "ORANGE", "SFR",
-            "BOUYGUES", "FREE ", "APPLE", "SAMSUNG", "XIAOMI",
-            "HUAWEI", "OPPO", "WIKO", "POINT SERVICE", "PSM",
-            "WEFIX", "WE FIX", "SAVE ", "IRIPARO", "MOBILAX",
-            "HUBSIDE", "TELECOM", "PHONE",
+            "BOUYGUES", "FREE ", "TELECOM", "PHONE",
+            "POINT SERVICE", "PSM",
         ],
         "mode": "loose",
     },
@@ -181,13 +179,17 @@ CHANNEL_KEYWORDS = {
     },
     "Refurb": {
         "keywords": [
-            "RECONDITION", "RECONDITIO", "REFURB", "REPAIR", "REPARATION",
-            "CASH CONVERTER", "CASH EXPRESS", "EASY CASH", "HAPPY CASH",
+            # Refurb / reconditioned
+            "RECONDITION", "RECONDITIO", "REFURB", "REMIS A NEUF",
             "BACK MARKET", "BACKMARKET", "RECOMMERCE", "SMAAART",
-            "CERTIDEAL", "REMADE", "REBORN", "OCCASION", "SECOND",
+            "CERTIDEAL", "REMADE", "REBORN",
+            # Repair specialists
+            "REPARATION", "REPAIR", "DEPANNAGE",
             "SAVE ", "WEFIX", "WE FIX", "IRIPARO", "MOBILAX",
-            "POINT SERVICE", "PSM ", "INFORMATIQUE", "DEPANNAGE",
-            "MAINTENANCE",
+            "POINT SERVICE", "PSM ",
+            # Second-hand / cash converters
+            "CASH CONVERTER", "CASH EXPRESS", "EASY CASH", "HAPPY CASH",
+            "OCCASION", "SECOND MAIN",
         ],
         "mode": "loose",
     },
@@ -210,8 +212,7 @@ CHANNEL_KNOWN_RETAILERS = {
     "CE": {
         "chains": [
             "FNAC", "DARTY", "BOULANGER", "ELECTRO DEPOT", "LDLC",
-            "MATERIEL NET", "CULTURA", "LICK", "HUBSIDE", "MICROMANIA",
-            "SAMSUNG ELECTRONICS", "APPLE RETAIL",
+            "MATERIEL NET", "CULTURA", "LICK", "MICROMANIA",
         ],
         "buying_groups": [
             "EXPERT", "EURONICS", "GITEM",
@@ -239,8 +240,6 @@ CHANNEL_KNOWN_RETAILERS = {
     "Mobile": {
         "chains": [
             "ORANGE", "SFR", "BOUYGUES TELECOM", "FREE",
-            "APPLE RETAIL", "SAMSUNG ELECTRONICS", "XIAOMI", "HUAWEI",
-            "HUBSIDE",
         ],
         "buying_groups": [],
     },
@@ -730,30 +729,23 @@ BODACC_MAX_LOOKUPS = 300  # cap to keep runtime reasonable
 # ---------------------------------------------------------------------------
 
 KNOWN_CHAINS = [
-    # CE / MDA / SDA national chains
+    # CE / MDA / SDA national retail chains (with French stores)
     "FNAC", "DARTY", "BOULANGER", "ELECTRO DEPOT", "ELECTRODEPOT",
     "BUT ", "BUT-", "CONFORAMA", "LDLC", "MATERIEL.NET", "MATERIEL NET",
-    "CULTURA", "LICK", "HUBSIDE",
-    # Telecom operator retail
+    "CULTURA", "LICK",
+    # Telecom operator retail stores
     "ORANGE", "SFR", "BOUYGUES TELECOM", "FREE MOBILE", "FREE SAS",
-    # Mobile / tech chains
-    "MICROMANIA", "SAMSUNG ELECTRONICS", "APPLE RETAIL", "APPLE FRANCE",
-    "XIAOMI", "HUAWEI",
+    # CE retail chains
+    "MICROMANIA",
     # Photo chains
     "PHOX", "CAMARA",
-    # Refurb / second-hand chains
+    # Refurb / repair chains
     "CASH CONVERTERS", "CASH CONVERTER", "EASY CASH", "HAPPY CASH",
     "CASH EXPRESS", "BACKMARKET", "BACK MARKET", "RECOMMERCE",
     "SMAAART", "CERTIDEAL", "REMADE", "REBORN",
-    # Mobile repair / accessory franchise chains
+    # Repair / accessory franchise chains
     "POINT SERVICE MOBILES", "PSM ", "WEFIX", "WE FIX", "SAVE ",
     "IRIPARO", "MOBILAX",
-    # Hypermarket groups (when they show up under CE APE codes)
-    "AUCHAN", "LECLERC", "CARREFOUR", "CORA ", "CASINO",
-    "INTERMARCHE", "HYPER U", "SUPER U", "SYSTEME U",
-    "LEROY MERLIN", "IKEA", "ACTION",
-    # International
-    "MEDIAMARKT", "MEDIA MARKT", "CURRYS", "COOLBLUE",
 ]
 
 KNOWN_BUYING_GROUPS = [
@@ -1670,7 +1662,7 @@ def main():
         # Flatten nested v3.11 response structure
         records = [_flatten_record(r) for r in records]
 
-        # Filter 1 — active establishments
+        # Filter 1 — active establishments only
         active = [
             r for r in records
             if r.get("etatAdministratifEtablissement") == "A"
@@ -1678,13 +1670,21 @@ def main():
                .get("etatAdministratifEtablissement") == "A"
         ]
 
-        # Filter 2 — size band >= SIZE_MIN
-        sized = [
+        # Filter 2 — exclude headquarters (we want retail shops, not offices)
+        retail = [
             r for r in active
+            if not r.get("etablissementSiege") in (True, "true", "True")
+            or len(active) <= 1  # keep if it's the company's only establishment
+        ]
+
+        # Filter 3 — size band >= SIZE_MIN
+        sized = [
+            r for r in retail
             if size_band_gte(r.get("trancheEffectifsEtablissement", "NN"), SIZE_MIN)
         ]
 
-        print(f"  Active: {len(active)}, with size >= {SIZE_MIN}: {len(sized)}")
+        print(f"  Active: {len(active)}, retail (non-HQ): {len(retail)}, "
+              f"with size >= {SIZE_MIN}: {len(sized)}")
 
         # NO keyword filtering — keep all. Confidence % is assigned instead.
         for rec in sized:
