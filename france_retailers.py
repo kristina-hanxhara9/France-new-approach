@@ -261,6 +261,24 @@ CHANNEL_KNOWN_RETAILERS = {
 }
 
 # ---------------------------------------------------------------------------
+# PER-CHANNEL KEYWORD NAME SEARCHES — the most common words used in French
+# retailer business names for each channel.  Searched directly by name in
+# SIRENE (denominationUniteLegale), separate from the APE code query.
+# Each hit gets a discovery_source = "Keyword: <word>" so you can see exactly
+# which keyword found the retailer.
+# ---------------------------------------------------------------------------
+
+CHANNEL_KEYWORD_SEARCHES = {
+    "Photo":             ["PHOTO", "CAMERA", "OPTIQUE", "STUDIO PHOTO"],
+    "CE":                ["ELECTRO", "MULTIMEDIA", "INFORMATIQUE", "HIFI"],
+    "MDA":               ["ELECTROMENAGER", "MENAGER", "CUISINE", "APPAREIL MENAGER"],
+    "SDA":               ["PETIT ELECTROMENAGER", "ELECTROMENAGER", "MENAGER", "CAFE"],
+    "Mobile":            ["TELEPHONE", "MOBILE", "TELECOM", "SMARTPHONE"],
+    "Phone Accessories": ["ACCESSOIRE TELEPHONE", "ACCESSOIRE MOBILE", "COQUE", "PROTECTION TELEPHONE"],
+    "Refurb":            ["RECONDITIONNE", "REPARATION TELEPHONE", "REPARATION MOBILE", "OCCASION"],
+}
+
+# ---------------------------------------------------------------------------
 # APE CODE REFERENCE — descriptions in French, English, Swedish
 # ---------------------------------------------------------------------------
 # APE (Activité Principale Exercée) is the French equivalent of SIC/NACE.
@@ -476,12 +494,31 @@ def _write_styled_overview(wb):
     )
 
     _section("How retailers are discovered")
-    _row("Step 1", "Search the SIRENE registry by APE activity codes mapped to each channel (see table below).")
-    _row("Step 2", "Keep only active businesses with 10+ employees.")
+    _row("Step 1", "Search the SIRENE registry by APE activity codes mapped to each "
+         "channel (see table below). Each hit is tagged discovery_source = 'APE Code'.")
+    _row("Step 2", "Keep only active, non-HQ establishments with 10+ employees.")
     _row("Step 3", "Search SIRENE by name for known chains and buying groups per channel "
-         "(e.g., FNAC, DARTY for CE) to catch retailers registered under different APE codes.")
-    _row("Step 4", "Assign a confidence level based on keyword matching (see below).")
-    _row("Step 5", "Enrich with turnover from INPI and filing status from BODACC.")
+         "(e.g., FNAC, DARTY for CE) to catch retailers registered under different APE "
+         "codes. Tagged discovery_source = 'Known Retailer: <name>'.")
+    _row("Step 4", "Search SIRENE by 4 generic channel keywords per channel (see table "
+         "below) — the most common words found in French retailer business names. "
+         "Tagged discovery_source = 'Keyword: <word>'.")
+    _row("Step 5", "Assign a confidence level based on keyword matching and APE code "
+         "alignment (see below).")
+    _row("Step 6", "Enrich with turnover from INPI and filing status from BODACC.")
+
+    _section("Channel Keyword Searches (Step 4)")
+    _row("", "Separate from APE code search — we query SIRENE directly by company "
+         "name using these keywords. Useful to catch retailers registered under "
+         "non-obvious APE codes. Each hit is tagged in the 'discovery_source' "
+         "column so you can trace exactly which keyword found it.")
+    _table(
+        ["Channel", "Keyword 1", "Keyword 2", "Keyword 3", "Keyword 4"],
+        [
+            [ch] + kws + [""] * (4 - len(kws))
+            for ch, kws in CHANNEL_KEYWORD_SEARCHES.items()
+        ],
+    )
 
     _section("APE Codes by Channel")
     _table(
@@ -556,6 +593,9 @@ def _write_styled_overview(wb):
             ["channel", "Which product channel(s) this retailer belongs to"],
             ["confidence", "How certain this retailer belongs to the channel (High/Medium/Low)"],
             ["retailer_type", "Chain, Buying Group, or Independent"],
+            ["discovery_source", "How this retailer was found: 'APE Code', "
+             "'Known Retailer: <name>', or 'Keyword: <word>'. Multiple sources "
+             "are joined with ' + ' if the same SIRET was found by several methods."],
             ["ape_code", "APE activity code for this establishment"],
             ["ape_code_company", "APE activity code at the parent company level"],
             ["employees_estab", "Employee count range for this establishment (e.g., 10-19)"],
@@ -971,7 +1011,8 @@ def _get_field(rec, field):
     return ""
 
 
-def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type=""):
+def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type="",
+                 discovery_source="APE Code"):
     """Extract all useful fields from a flattened SIRENE record into a row dict."""
     ul = rec.get("uniteLegale") or {}
     siret = rec.get("siret", "")
@@ -1036,6 +1077,7 @@ def _extract_row(rec, channel, ape_code, confidence="Medium", retailer_type=""):
         "date_created_company": date_creation_ul,
         "retailer_type": retailer_type,
         "confidence": confidence,
+        "discovery_source": discovery_source,
     }
 
 
@@ -1224,7 +1266,7 @@ def search_by_name(name, limit=20):
 def fetch_known_retailers_for_channel(channel):
     """Search SIRENE for known chains/buying groups for a channel.
 
-    Returns a list of (record, retailer_type) tuples.
+    Returns a list of (record, retailer_type, source_label) tuples.
     """
     known = CHANNEL_KNOWN_RETAILERS.get(channel, {})
     chains = known.get("chains", [])
@@ -1240,7 +1282,7 @@ def fetch_known_retailers_for_channel(channel):
             siret = rec.get("siret", "")
             if siret and siret not in seen_sirets:
                 seen_sirets.add(siret)
-                results.append((rec, "Chain"))
+                results.append((rec, "Chain", f"Known Retailer: {name}"))
         if recs:
             print(f"    Known chain '{name}': {len(recs)} establishments")
 
@@ -1252,9 +1294,38 @@ def fetch_known_retailers_for_channel(channel):
             siret = rec.get("siret", "")
             if siret and siret not in seen_sirets:
                 seen_sirets.add(siret)
-                results.append((rec, "Buying Group"))
+                results.append((rec, "Buying Group", f"Known Retailer: {name}"))
         if recs:
             print(f"    Known buying group '{name}': {len(recs)} establishments")
+
+    return results
+
+
+def fetch_keyword_search_for_channel(channel):
+    """Search SIRENE by company-name keywords for a channel.
+
+    Uses the 4 generic keywords in CHANNEL_KEYWORD_SEARCHES — these are the
+    most common words found in French retailer business names for this
+    channel.  Complements the APE code query and the known-retailer search.
+
+    Returns a list of (record, source_label) tuples where source_label is
+    "Keyword: <word>" so we can tag each record with what found it.
+    """
+    keywords = CHANNEL_KEYWORD_SEARCHES.get(channel, [])
+    results = []
+    seen_sirets = set()
+
+    for kw in keywords:
+        if TEST_MODE and len(results) >= TEST_LIMIT:
+            break
+        recs = search_by_name(kw, limit=50)
+        for rec in recs:
+            siret = rec.get("siret", "")
+            if siret and siret not in seen_sirets:
+                seen_sirets.add(siret)
+                results.append((rec, f"Keyword: {kw}"))
+        if recs:
+            print(f"    Keyword '{kw}': {len(recs)} establishments")
 
     return results
 
@@ -1698,7 +1769,8 @@ def main():
             conf_pct = _calc_confidence(name, channel, ape_code,
                                         cat_entreprise=cat_e, is_employer=is_emp)
 
-            row = _extract_row(rec, channel, ape_code, confidence=conf_pct)
+            row = _extract_row(rec, channel, ape_code, confidence=conf_pct,
+                               discovery_source="APE Code")
             siret = row["siret"]
             seen_sirets.add(siret)
             all_rows.append(row)
@@ -1736,7 +1808,7 @@ def main():
         print(f"\n  [{channel}] known retailers:")
         known_results = fetch_known_retailers_for_channel(channel)
         added = 0
-        for rec, rtype in known_results:
+        for rec, rtype, src_label in known_results:
             rec = _flatten_record(rec)
             siret = rec.get("siret", "")
             if siret in seen_sirets:
@@ -1755,11 +1827,49 @@ def main():
             conf_pct = _calc_confidence(name, channel, ape, is_known_retailer=True,
                                          retailer_type=rtype, cat_entreprise=cat_e,
                                          is_employer=is_emp)
-            row = _extract_row(rec, channel, "", conf_pct, rtype)
+            row = _extract_row(rec, channel, "", conf_pct, rtype,
+                               discovery_source=src_label)
             seen_sirets.add(siret)
             all_rows.append(row)
             added += 1
         print(f"  [{channel}] Added {added} new establishments from known retailer search")
+
+    # =====================================================================
+    # PHASE 1c — Search per-channel keywords in business names
+    # =====================================================================
+    print("\n" + "=" * 60)
+    print("Searching for retailers by channel keywords …")
+    print("=" * 60)
+    for channel in all_channels:
+        print(f"\n  [{channel}] keyword searches:")
+        kw_results = fetch_keyword_search_for_channel(channel)
+        added = 0
+        for rec, src_label in kw_results:
+            rec = _flatten_record(rec)
+            siret = rec.get("siret", "")
+            if siret in seen_sirets:
+                # Already found — just note the extra keyword signal
+                for existing in all_rows:
+                    if existing["siret"] == siret and existing["channel"] == channel:
+                        # Append keyword source if not already in the label
+                        if src_label not in (existing.get("discovery_source") or ""):
+                            existing["discovery_source"] = (
+                                (existing["discovery_source"] or "") + " + " + src_label
+                            ).strip(" +")
+                continue
+            ul = rec.get("uniteLegale") or {}
+            name = rec.get("denominationUniteLegale") or ul.get("denominationUniteLegale", "")
+            ape = rec.get("activitePrincipaleEtablissement", "")
+            cat_e = rec.get("categorieEntreprise") or ul.get("categorieEntreprise", "")
+            is_emp = rec.get("caractereEmployeurEtablissement", "")
+            conf_pct = _calc_confidence(name, channel, ape,
+                                        cat_entreprise=cat_e, is_employer=is_emp)
+            row = _extract_row(rec, channel, "", conf_pct, "",
+                               discovery_source=src_label)
+            seen_sirets.add(siret)
+            all_rows.append(row)
+            added += 1
+        print(f"  [{channel}] Added {added} new establishments from keyword search")
 
     if not all_rows:
         print("\nNo records collected. Check your credentials and network.")
@@ -1790,9 +1900,20 @@ def main():
     def collapse(group):
         channels = sorted(set(group["channel"]))
         ape_codes = sorted(set(group["ape_code"]))
+        # Merge discovery sources from all rows in the group
+        sources = []
+        for src in group["discovery_source"].values:
+            if not src:
+                continue
+            # Each src may already be a "X + Y" string — split and dedup
+            for part in str(src).split(" + "):
+                part = part.strip()
+                if part and part not in sources:
+                    sources.append(part)
         result = group.iloc[0].copy()
         result["channel"] = " | ".join(channels)
         result["ape_code"] = " | ".join(ape_codes)
+        result["discovery_source"] = " + ".join(sources) if sources else ""
         # Keep best confidence level (High > Medium > Low)
         conf_vals = group["confidence"].values
         if "High" in conf_vals:
@@ -1879,6 +2000,7 @@ def main():
         "siret", "siren", "nic",
         "legal_name", "trade_name", "is_hq",
         "channel", "confidence", "retailer_type",
+        "discovery_source",
         "ape_code", "ape_code_company",
         "address", "postcode", "city",
         "employees_estab", "employees_company",
@@ -1955,6 +2077,15 @@ def main():
              "Official gazette, depot des comptes = company is alive and filing."),
             ("Size filter", f"trancheEffectifs >= {SIZE_MIN}"),
             ("APE codes queried", ", ".join(APE_CODES.keys())),
+            ("Discovery — APE Code",
+             "Retailer was found via the APE activity code query (Phase 1)."),
+            ("Discovery — Known Retailer",
+             "Retailer was found via a name search for known chains or buying "
+             "groups for this channel (Phase 1b). Format: 'Known Retailer: <name>'."),
+            ("Discovery — Keyword",
+             "Retailer was found via a generic channel keyword name search "
+             "(Phase 1c). 4 keywords per channel, searched in "
+             "denominationUniteLegale. Format: 'Keyword: <word>'."),
             ("Confidence — High (green)",
              "Company name matches channel-specific keywords OR is a known "
              "chain/buying group for that channel. Very likely relevant."),
