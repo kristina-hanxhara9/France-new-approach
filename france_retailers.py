@@ -496,7 +496,10 @@ def _write_styled_overview(wb):
     _section("How retailers are discovered")
     _row("Step 1", "Search the SIRENE registry by APE activity codes mapped to each "
          "channel (see table below). Each hit is tagged discovery_source = 'APE Code'.")
-    _row("Step 2", "Keep only active, non-HQ establishments with 10+ employees.")
+    _row("Step 2", "Keep only active, non-HQ establishments with 10+ employees. "
+         "Exclude wholesalers (APE section 46.xx and company names containing "
+         "GROSSISTE, VENTE EN GROS, WHOLESALE, B2B, NEGOCE, CASH AND CARRY, "
+         "IMPORT EXPORT).")
     _row("Step 3", "Search SIRENE by name for known chains and buying groups per channel "
          "(e.g., FNAC, DARTY for CE) to catch retailers registered under different APE "
          "codes. Tagged discovery_source = 'Known Retailer: <name>'.")
@@ -962,6 +965,40 @@ def _flatten_record(rec):
                 if key not in flat or not flat[key]:
                     flat[key] = val
     return flat
+
+
+def _is_wholesale(rec):
+    """Return True if the record looks like a wholesaler rather than a retailer.
+
+    Two signals:
+      - APE activity code starts with '46.' (French wholesale trade section)
+      - Company / trade name contains wholesale keywords (GROS, GROSSISTE,
+        WHOLESALE, B2B, NEGOCE, CASH AND CARRY, IMPORT EXPORT)
+    """
+    # APE check — wholesale trade is section 46
+    ape = (rec.get("activitePrincipaleEtablissement") or "").strip()
+    if not ape:
+        ul = rec.get("uniteLegale") or {}
+        ape = (ul.get("activitePrincipaleUniteLegale") or "").strip()
+    if ape.startswith("46."):
+        return True
+
+    # Name check
+    ul = rec.get("uniteLegale") or {}
+    name = (rec.get("denominationUniteLegale")
+            or ul.get("denominationUniteLegale") or "").upper()
+    trade = (rec.get("enseigne1Etablissement")
+             or rec.get("denominationUsuelleEtablissement") or "").upper()
+    haystack = f" {name} {trade} "
+    wholesale_tokens = (
+        " GROSSISTE", " GROS ", "VENTE EN GROS", " WHOLESALE",
+        " B2B", " B TO B", " NEGOCE", "CASH AND CARRY", "CASH & CARRY",
+        "IMPORT EXPORT", "IMPORT-EXPORT",
+    )
+    for tok in wholesale_tokens:
+        if tok in haystack:
+            return True
+    return False
 
 
 def _calc_confidence(name, channel, ape_code, is_known_retailer=False,
@@ -1748,13 +1785,17 @@ def main():
             or len(active) <= 1  # keep if it's the company's only establishment
         ]
 
-        # Filter 3 — size band >= SIZE_MIN
+        # Filter 3 — exclude wholesalers
+        retail_only = [r for r in retail if not _is_wholesale(r)]
+
+        # Filter 4 — size band >= SIZE_MIN
         sized = [
-            r for r in retail
+            r for r in retail_only
             if size_band_gte(r.get("trancheEffectifsEtablissement", "NN"), SIZE_MIN)
         ]
 
         print(f"  Active: {len(active)}, retail (non-HQ): {len(retail)}, "
+              f"non-wholesale: {len(retail_only)}, "
               f"with size >= {SIZE_MIN}: {len(sized)}")
 
         # NO keyword filtering — keep all. Confidence % is assigned instead.
@@ -1810,6 +1851,8 @@ def main():
         added = 0
         for rec, rtype, src_label in known_results:
             rec = _flatten_record(rec)
+            if _is_wholesale(rec):
+                continue
             siret = rec.get("siret", "")
             if siret in seen_sirets:
                 # Already found — upgrade its confidence
@@ -1846,6 +1889,8 @@ def main():
         added = 0
         for rec, src_label in kw_results:
             rec = _flatten_record(rec)
+            if _is_wholesale(rec):
+                continue
             siret = rec.get("siret", "")
             if siret in seen_sirets:
                 # Already found — just note the extra keyword signal
@@ -2076,6 +2121,12 @@ def main():
              "BODACC (bodacc-datadila.opendatasoft.com) — free, no auth. "
              "Official gazette, depot des comptes = company is alive and filing."),
             ("Size filter", f"trancheEffectifs >= {SIZE_MIN}"),
+            ("Wholesale filter",
+             "Excludes establishments whose APE code starts with '46.' "
+             "(French wholesale trade section) or whose name contains "
+             "GROSSISTE, GROS, VENTE EN GROS, WHOLESALE, B2B, NEGOCE, "
+             "CASH AND CARRY, or IMPORT EXPORT. Applied in all 3 discovery "
+             "phases (APE code, known retailer, keyword search)."),
             ("APE codes queried", ", ".join(APE_CODES.keys())),
             ("Discovery — APE Code",
              "Retailer was found via the APE activity code query (Phase 1)."),
