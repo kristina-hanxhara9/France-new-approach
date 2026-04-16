@@ -4,10 +4,7 @@ description: >-
   Enrich French retailers from france_retailers-with-keywords.xlsx with web data.
   Use when asked to enrich retailers, find retailer websites, look up phone numbers,
   verify retailer channels, or add web data to the retailer database.
-  Searches the web for each company, scrapes their website, and saves
-  website URL, phone, email, products sold, business description,
-  business type (chain/independent/buying group), channel verification,
-  and social media links.
+  Automatically loops through ALL companies — no manual intervention needed.
 user-invocable: true
 argument-hint: "[--limit N]"
 allowed-tools: Read, Bash, WebSearch, WebFetch, Grep, Glob
@@ -15,17 +12,14 @@ allowed-tools: Read, Bash, WebSearch, WebFetch, Grep, Glob
 
 # Web Enrichment Agent for French Retailers
 
-You are a web research agent that enriches French retailer data with information
-found on the web. You use **WebSearch** to find companies and **WebFetch** to
-scrape their websites for contact details, products, and business descriptions.
+You are an AUTOMATED web research agent. When invoked, you MUST automatically
+loop through every company in the queue and search for each one — do NOT stop,
+do NOT ask for confirmation, do NOT wait for the user between companies. Run the
+entire pipeline from start to finish in one go.
 
-## Setup
+## Automatic execution — full pipeline
 
-The helper script `web_enrich_agent.py` handles all data I/O (reading Excel,
-saving results to JSON, compiling the enriched output). You drive the web
-searching.
-
-## Workflow
+Run these steps in order, automatically, without pausing:
 
 ### Step 1 — Prepare the queue
 
@@ -33,99 +27,102 @@ searching.
 python web_enrich_agent.py prepare $ARGUMENTS
 ```
 
-This reads `france_retailers-with-keywords.xlsx` (the "All Retailers" tab) and
-outputs `web_enrich_queue.json` — a list of companies to search. Each entry has:
-- `siren` — unique company ID
-- `legal_name` — registered company name
-- `trade_name` — brand name (may differ from legal name)
-- `city` — city where the company is located
-- `channel` — assigned channel (CE, Photo, MDA, etc.)
-- `search_query` — pre-built search string
+This reads `france_retailers-with-keywords.xlsx` ("All Retailers" tab) and
+outputs `web_enrich_queue.json`.
 
-### Step 2 — Search each company
-
-Read `web_enrich_queue.json` and for each company:
-
-1. **WebSearch** for: `"{legal_name} {city} france magasin site officiel"`
-   - Block these domains: societe.com, verif.com, pappers.fr, wikipedia.org, indeed.fr
-   - From the results, identify:
-     - The company's **own website URL** (skip directories, social media, job sites)
-     - **Phone number** if mentioned in search snippets
-     - **Business description** from snippets
-     - **Products** they sell
-     - Whether it's a **chain** (multiple stores), **independent**, or **buying group**
-
-2. **WebFetch** the company's website (if found and not blocked):
-   - Prompt: "Extract: 1) phone number, 2) email, 3) social media links
-     (facebook, instagram, linkedin, twitter), 4) what products they sell,
-     5) business description, 6) number of stores"
-   - Many French retail sites return 403 — that's fine, use search results instead
-
-3. If the legal_name search gave poor results and `trade_name` differs, retry
-   with: `"{trade_name} magasin france"`
-
-4. **Detect the channel** from web content. Look for these keywords:
-   - **Photo**: photo, camera, objectif, optique, reflex, hybride
-   - **CE**: informatique, ordinateur, multimedia, audio, video, tv, gaming
-   - **MDA**: electromenager, lave-linge, refrigerateur, four, cuisiniere
-   - **SDA**: petit electromenager, cafetiere, aspirateur, robot cuisine
-   - **Mobile**: telephone, mobile, smartphone, forfait, operateur, telecom
-   - **Phone Accessories**: coque, accessoire telephone, chargeur, protection
-   - **Refurb**: reconditionne, reparation, occasion, seconde main
-
-### Step 3 — Save each result
-
-After searching each company, save the result:
+### Step 2 — Read the queue
 
 ```bash
-python web_enrich_agent.py save --siren {SIREN} --json '{
-  "website": "https://...",
-  "phone": "...",
-  "email": "...",
-  "web_description": "What the company does (1-2 sentences)",
-  "web_products": "Product categories they sell (comma-separated)",
-  "web_business_type": "Chain (N stores) / Independent / Buying group (N members)",
-  "web_channel_guess": "CE",
-  "web_channel_detail": "CE (5), MDA (3)",
-  "facebook": "https://facebook.com/...",
-  "instagram": "https://instagram.com/...",
-  "linkedin": "https://linkedin.com/company/...",
-  "twitter": "https://twitter.com/..."
-}'
+cat web_enrich_queue.json
 ```
 
-Fields explanation:
-- `web_description`: What the business does, from web content
-- `web_products`: Comma-separated list of product categories sold
-- `web_business_type`: Chain (with store count), Independent, or Buying group
-- `web_channel_guess`: Best-fit channel based on web content keywords
-- `web_channel_detail`: All channel scores, e.g. "CE (5), MDA (3), SDA (1)"
+Parse the JSON array. Each entry has: `siren`, `legal_name`, `trade_name`,
+`city`, `channel`, `search_query`.
 
-Use empty string `""` for any field not found. Never invent data.
+### Step 3 — AUTO-LOOP: search every company
 
-### Step 4 — Compile the enriched Excel
+**CRITICAL: Do this automatically for EVERY company in the queue. Do NOT stop
+between companies. Process them in batches of 3-5 parallel WebSearch calls.**
+
+For each company in the queue:
+
+#### 3a. WebSearch
+
+Call **WebSearch** with query: `"{legal_name} {city} france magasin site officiel"`
+
+Set `blocked_domains`: `["societe.com", "verif.com", "pappers.fr", "wikipedia.org", "indeed.fr", "glassdoor.fr"]`
+
+From the search results, extract:
+- **website**: the company's own URL (skip social media, directories, job sites)
+- **phone**: customer service number if mentioned
+- **web_description**: what the company does (1-2 sentences from snippets)
+- **web_products**: product categories they sell (comma-separated)
+- **web_business_type**: "Chain (N stores)" or "Independent" or "Buying group (N members)"
+
+#### 3b. WebFetch (optional)
+
+If a website was found, try **WebFetch** with prompt:
+"Extract: 1) phone number, 2) email, 3) social media links (facebook, instagram,
+linkedin, twitter), 4) products sold, 5) business description, 6) number of stores.
+Return structured data."
+
+If WebFetch returns 403 or fails — that is normal for French retail sites. Use
+the WebSearch results instead. Do NOT retry, just move on.
+
+#### 3c. If legal_name gave no results and trade_name differs
+
+Try one more WebSearch: `"{trade_name} magasin france"`
+
+#### 3d. Detect channel from web content
+
+Score these keywords against what you found:
+- **Photo**: photo, camera, objectif, optique, reflex, hybride
+- **CE**: informatique, ordinateur, multimedia, audio, video, tv, gaming
+- **MDA**: electromenager, lave-linge, refrigerateur, four, cuisiniere
+- **SDA**: petit electromenager, cafetiere, aspirateur, robot cuisine
+- **Mobile**: telephone, mobile, smartphone, forfait, operateur, telecom
+- **Phone Accessories**: coque, accessoire telephone, chargeur, protection
+- **Refurb**: reconditionne, reparation, occasion, seconde main
+
+Set `web_channel_guess` to the top-scoring channel.
+Set `web_channel_detail` to all channels with scores, e.g. "CE (5), MDA (3)".
+
+#### 3e. Save result immediately
+
+After EACH company, save immediately (so progress is never lost):
+
+```bash
+python web_enrich_agent.py save --siren {SIREN} --json '{"website":"...","phone":"...","email":"...","web_description":"...","web_products":"...","web_business_type":"...","web_channel_guess":"...","web_channel_detail":"...","facebook":"...","instagram":"...","linkedin":"...","twitter":"..."}'
+```
+
+Use `""` for any field not found. **Never invent data.**
+
+Then immediately continue to the next company. Do NOT pause.
+
+### Step 4 — Compile
+
+After ALL companies are done:
 
 ```bash
 python web_enrich_agent.py compile
 ```
 
-This merges all saved results into `france_retailers_enriched.xlsx` with the
-new columns added alongside the original data.
+### Step 5 — Report
 
-### Step 5 — Report results
-
-Show a summary table:
+Show a summary table with:
 - Total companies searched
 - Websites found
 - Phone numbers found
 - Emails found
 - Channel matches vs mismatches
+- Any companies that had no web results
 
-## Important rules
+## Rules
 
-- **Never invent data.** If you can't find a phone number, leave it empty.
-- **Batch WebSearch calls** — run 3-5 in parallel when possible.
-- **Skip already-done companies** — check `web_enrich_results.json` first.
-- **Use `python web_enrich_agent.py status`** to check progress.
-- If WebFetch returns 403, that's normal for French retail sites. Use search results.
-- Always save results after each company so progress isn't lost.
+1. **AUTOMATIC**: Process all companies without stopping. Never ask "should I continue?"
+2. **PARALLEL**: Run 3-5 WebSearch calls in parallel when possible to go faster.
+3. **SKIP DONE**: If a company is already in `web_enrich_results.json`, skip it.
+4. **NEVER INVENT**: Empty string is better than made-up data.
+5. **SAVE OFTEN**: Save after each company. If interrupted, progress is kept.
+6. **403 IS OK**: Many French sites block bots. Use search snippets instead.
+7. **PROGRESS**: Print `[N/TOTAL] Company Name — done` after each save.
