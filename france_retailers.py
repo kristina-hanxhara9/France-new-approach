@@ -2081,7 +2081,7 @@ def main():
         if not ch_df.empty:
             channel_dfs[ch] = ch_df
 
-    output_file = "france_retailers.xlsx"
+    output_file = "france_retailers-with-keywords.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         # One sheet per channel
         for ch in channel_names:

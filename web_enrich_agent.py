@@ -2,7 +2,7 @@
 """
 Web Enrichment Agent for French Retailers
 ==========================================
-Reads france_retailers.xlsx, searches the web for each unique company,
+Reads france_retailers-with-keywords.xlsx, searches the web for each unique company,
 and enriches with: website, phone, email, social media links, a short
 description, and a web-based channel verification.
 
@@ -410,7 +410,7 @@ def run(input_file, output_file, limit=None):
         df = pd.read_excel(input_file, sheet_name="All Retailers")
     except Exception as exc:
         print(f"ERROR reading {input_file}: {exc}")
-        print("  Make sure france_retailers.py has been run first.")
+        print("  Make sure france_retailers.py has been run first and the file exists.")
         return
 
     print(f"  Loaded {len(df)} rows from 'All Retailers' sheet")
@@ -562,8 +562,8 @@ def main():
     )
     parser.add_argument(
         "--input", "-i",
-        default="france_retailers.xlsx",
-        help="Input Excel file (default: france_retailers.xlsx)",
+        default="france_retailers-with-keywords.xlsx",
+        help="Input Excel file (default: france_retailers-with-keywords.xlsx)",
     )
     parser.add_argument(
         "--output", "-o",

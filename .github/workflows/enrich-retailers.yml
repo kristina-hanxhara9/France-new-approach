@@ -12,7 +12,7 @@ on:
   # Or run after the main retailer script pushes new data
   push:
     paths:
-      - 'france_retailers.xlsx'
+      - 'france_retailers-with-keywords.xlsx'
 
 jobs:
   enrich:
