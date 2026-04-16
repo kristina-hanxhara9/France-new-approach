@@ -1,0 +1,122 @@
+{
+  "302620747": {
+    "website": "https://www.but.fr",
+    "phone": "",
+    "email": "",
+    "web_description": "Magasins BUT: meubles, electromenager, TV, Hi-Fi, multimedia. Plus de 330 magasins en France.",
+    "web_channel_guess": "MDA",
+    "web_channel_detail": "MDA (6), CE (3), SDA (2)",
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  },
+  "343744446": {
+    "website": "https://www.sfr.fr",
+    "phone": "1023",
+    "email": "",
+    "web_description": "SFR: operateur mobile et internet en France. Forfaits mobile, box internet, fibre.",
+    "web_channel_guess": "Mobile",
+    "web_channel_detail": "Mobile (7)",
+    "facebook": "https://www.facebook.com/SFR",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": "https://twitter.com/SFR"
+  },
+  "353318981": {
+    "website": "https://www.fnacdarty.com",
+    "phone": "",
+    "email": "",
+    "web_description": "FNAC DARTY: leader europeen distribution electronique, electromenager, biens culturels. 1500 magasins, 30000 employes, present dans 15 pays.",
+    "web_channel_guess": "CE",
+    "web_channel_detail": "CE (5), MDA (3), SDA (2)",
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "https://www.linkedin.com/company/fnac-darty",
+    "twitter": ""
+  },
+  "380129866": {
+    "website": "https://www.electrodepot.fr",
+    "phone": "",
+    "email": "",
+    "web_description": "Electro Depot: chaine electromenager discount. Gros et petit electromenager, image, son, multimedia a prix bas.",
+    "web_channel_guess": "MDA",
+    "web_channel_detail": "MDA (5), CE (3), SDA (2)",
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  },
+  "440304385": {
+    "website": "https://www.ldlc.com",
+    "phone": "",
+    "email": "",
+    "web_description": "LDLC: High-Tech Experience. Magasin informatique, reparation et depannage. Reseau de 100 magasins en France. PC, composants, peripheriques, multimedia.",
+    "web_channel_guess": "CE",
+    "web_channel_detail": "CE (6)",
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  },
+  "451355192": {
+    "website": "https://www.boulanger.com",
+    "phone": "3011",
+    "email": "contact@infos.boulanger.com",
+    "web_description": "Boulanger: multi-specialiste electromenager et multimedia. Accompagne les clients dans amelioration du cadre de vie.",
+    "web_channel_guess": "CE",
+    "web_channel_detail": "CE (4), MDA (5), SDA (2)",
+    "facebook": "https://www.facebook.com/Boulanger.Electromenager.Multimedia",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  },
+  "503780322": {
+    "website": "https://www.phox.fr",
+    "phone": "",
+    "email": "",
+    "web_description": "PHOX: magasins photo specialises. Appareils photo, video, accessoires professionnels. Plus de 100 magasins en France depuis 1974.",
+    "web_channel_guess": "Photo",
+    "web_channel_detail": "Photo (8)",
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  },
+  "722023184": {
+    "website": "https://www.orange.fr",
+    "phone": "3900",
+    "email": "",
+    "web_description": "Orange: operateur telecom n1 en France. Mobile, internet fibre, TV. Boutiques partout en France.",
+    "web_channel_guess": "Mobile",
+    "web_channel_detail": "Mobile (8)",
+    "facebook": "",
+    "instagram": "https://www.instagram.com/orange",
+    "linkedin": "https://www.linkedin.com/company/orange",
+    "twitter": ""
+  },
+  "789462872": {
+    "website": "https://www.cashconverters.fr",
+    "phone": "",
+    "email": "",
+    "web_description": "Cash Converters: achat et revente produits occasion. 62 magasins en France. Produits testes, garantis 1 an. Smartphones, PC, consoles, electromenager.",
+    "web_channel_guess": "Refurb",
+    "web_channel_detail": "Refurb (5), CE (2)",
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  },
+  "802844757": {
+    "website": "https://lick.fr",
+    "phone": "",
+    "email": "",
+    "web_description": "LICK: boutique objets connectes, smartphones, tablettes, accessoires tendance. Reseau de magasins en France, partenaire Boulanger.",
+    "web_channel_guess": "Phone Accessories",
+    "web_channel_detail": "Phone Accessories (5), Mobile (3)",
+    "facebook": "https://www.facebook.com/Lick.officiel",
+    "instagram": "",
+    "linkedin": "",
+    "twitter": ""
+  }
+}
