@@ -260,7 +260,8 @@ def cmd_compile(args):
 
     # Map results to rows (by siren)
     enrich_cols = [
-        "website", "phone", "email", "web_description",
+        "website", "phone", "email",
+        "web_description", "web_products", "web_business_type",
         "web_channel_guess", "web_channel_detail",
         "facebook", "instagram", "linkedin", "twitter",
     ]
