@@ -1,18 +1,18 @@
 name: Web Enrich Retailers
 
 on:
-  # Run manually from the Actions tab
+  # Run manually from the Actions tab — designed to be triggered by
+  # a Copilot agent or manually after the agent has finished searching
   workflow_dispatch:
     inputs:
+      command:
+        description: 'Command to run: prepare, compile, or status'
+        required: true
+        default: 'compile'
       limit:
-        description: 'Max companies to search (blank = all)'
+        description: 'For prepare: max companies to queue (blank = all)'
         required: false
         default: ''
-
-  # Or run after the main retailer script pushes new data
-  push:
-    paths:
-      - 'france_retailers-with-keywords.xlsx'
 
 jobs:
   enrich:
@@ -30,24 +30,32 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run web enrichment agent
+      - name: Run web enrichment command
         run: |
-          LIMIT_ARG=""
-          if [ -n "${{ github.event.inputs.limit }}" ]; then
-            LIMIT_ARG="--limit ${{ github.event.inputs.limit }}"
+          CMD="${{ github.event.inputs.command }}"
+          if [ "$CMD" = "prepare" ]; then
+            LIMIT_ARG=""
+            if [ -n "${{ github.event.inputs.limit }}" ]; then
+              LIMIT_ARG="--limit ${{ github.event.inputs.limit }}"
+            fi
+            python web_enrich_agent.py prepare $LIMIT_ARG
+          elif [ "$CMD" = "compile" ]; then
+            python web_enrich_agent.py compile
+          elif [ "$CMD" = "status" ]; then
+            python web_enrich_agent.py status
           fi
-          python web_enrich_agent.py $LIMIT_ARG
 
-      - name: Upload enriched Excel
+      - name: Upload output
         uses: actions/upload-artifact@v4
+        if: ${{ github.event.inputs.command == 'compile' }}
         with:
           name: enriched-retailers
           path: france_retailers_enriched.xlsx
 
-      - name: Commit enriched file (if changed)
+      - name: Commit results (if changed)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add france_retailers_enriched.xlsx web_enrich_cache.json
-          git diff --staged --quiet || git commit -m "Auto-enrich retailers with web data"
+          git add -A
+          git diff --staged --quiet || git commit -m "Auto: web enrichment update"
           git push || true

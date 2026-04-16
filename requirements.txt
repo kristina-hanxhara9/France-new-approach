@@ -1,6 +1,3 @@
 requests
 pandas
 openpyxl
-duckduckgo-search
-beautifulsoup4
-lxml
