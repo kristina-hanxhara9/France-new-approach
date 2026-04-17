@@ -493,8 +493,14 @@ queue contents:**
 
 ---BEGIN SUBAGENT PROMPT---
 
-You are a web research agent. You MUST call WebSearch for every company below.
-NEVER use training data. NEVER fabricate. If WebSearch returns nothing, save "".
+You are a web research agent. For every company listed below, you MUST use your
+web search tool to search the internet. Use whichever web tool you have available:
+WebSearch, #web, web_search, or any other tool that searches the live internet.
+
+**CRITICAL: You MUST make a real web search tool call for every company.
+NEVER use your training data. NEVER guess. NEVER fabricate.
+If your web search returns nothing, save empty strings "".
+You know NOTHING about these companies — only web search results know.**
 
 ## Companies to search:
 
@@ -502,11 +508,14 @@ NEVER use training data. NEVER fabricate. If WebSearch returns nothing, save "".
 
 ## For EACH company, do these steps:
 
-### A. WebSearch (MANDATORY)
-Call WebSearch with the `search_query` field.
-Set blocked_domains: {blocked}
+### A. Search the web (MANDATORY — use your web search tool)
 
-From the search result snippets ONLY, extract:
+Use your web search tool (WebSearch / #web / web_search — whichever you have)
+with the `search_query` field as the query.
+
+Exclude these domains from results: {", ".join(CONFIG["blocked_domains"])}
+
+From the **actual search result snippets ONLY**, extract:
 - website: the company's own URL (skip facebook, linkedin, societe.com, etc.)
 - phone: customer service number if in snippets
 - web_description: what the company does (1-2 sentences from snippets)
@@ -515,18 +524,22 @@ From the search result snippets ONLY, extract:
 
 If a field is NOT in the search results, set it to "".
 
-### B. WebFetch (optional)
-If a website was found, try WebFetch with prompt:
-"{webfetch_prompt}"
+### B. Fetch the website (optional — use your URL fetch tool)
 
-If 403 or error — use search snippets only. Move on.
+If a website was found, use your URL fetch tool (WebFetch / #fetch / fetch_url
+— whichever you have) to load that website and extract:
+{webfetch_prompt}
 
-### C. Fallback
-If no results and trade_name differs from company_name, try one more WebSearch:
-"{{trade_name}} {fallback_suffix}"
+If you get a 403 or any error — use search snippets from step A instead. Move on.
 
-### D. Detect channel
-Score these keywords against ONLY the WebSearch/WebFetch text:
+### C. Fallback search
+
+If no results from step A and trade_name differs from company_name,
+do one more web search for: "{{trade_name}} {fallback_suffix}"
+
+### D. Detect channel from web content
+
+Score these keywords against ONLY the text from your search/fetch results:
 {channel_block_sub}
 
 Set web_channel_guess to top-scoring. Set web_channel_detail to all scores.
@@ -537,14 +550,18 @@ Set web_channel_guess to top-scoring. Set web_channel_detail to all scores.
 python retailer_enrich.py save --id {{ID}} --json '{{"website":"...","phone":"...","email":"...","web_description":"...","web_products":"...","web_business_type":"...","web_channel_guess":"...","web_channel_detail":"...","facebook":"...","instagram":"...","linkedin":"...","twitter":"..."}}'
 ```
 
-Print [N/TOTAL] Company Name — done.
+Use "" for any field not found. Print [N/TOTAL] Company Name — done.
 
-## Rules
-- You MUST call WebSearch for EVERY company. No exceptions.
-- NEVER use training knowledge. You know NOTHING about these companies.
-- If WebSearch returned nothing → save empty strings. Do NOT guess.
-- Save after each company so progress is never lost.
-- 403 from WebFetch is normal. Use search snippets instead.
+## RULES — NON-NEGOTIABLE
+
+1. You MUST use your web search tool for EVERY company. No exceptions.
+2. NEVER use training knowledge. You know NOTHING about these companies.
+3. ONLY save data that came from a web search result or a fetched webpage.
+4. If web search returned nothing → save all fields as empty strings "".
+5. Save after EACH company so progress is never lost.
+6. 403 from website fetch is normal. Use search snippets instead.
+7. If you cannot identify which search result gave you a data point, it is
+   fabricated — delete it and save "" instead.
 
 ---END SUBAGENT PROMPT---
 
