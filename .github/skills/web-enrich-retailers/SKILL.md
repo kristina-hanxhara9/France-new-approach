@@ -34,20 +34,27 @@ entire pipeline from start to finish in one go.
 **TEST: If you have not made a WebSearch tool call for a company, you CANNOT
 save any data for that company. Period.**
 
-## Automatic execution — full pipeline
+## Execution — BATCH MODE (10 companies per cycle)
 
-Run these steps in order, automatically, without pausing:
+**WHY BATCHES:** Processing hundreds of companies in one go causes context
+overflow, leading to fabricated results. Process exactly 10 at a time, then
+re-prepare to get the next 10. The `prepare` command auto-skips companies
+already in the results file, so each cycle picks up where the last left off.
 
-### Step 1 — Prepare the queue
+### BATCH LOOP — repeat until done:
+
+#### Step 1 — Prepare a batch of 10
 
 ```bash
-python retailer_enrich.py prepare $ARGUMENTS
+python retailer_enrich.py prepare --limit 10
 ```
 
-This reads `france_retailers-with-keywords.xlsx` ("All Retailers" tab) and
-outputs `web_enrich_queue.json`.
+This reads `france_retailers-with-keywords.xlsx`, skips already-done companies,
+and outputs the next 10 to `web_enrich_queue.json`.
 
-### Step 2 — Read the queue
+**If the queue is empty (0 companies to search), go to Step 4 — you are done.**
+
+#### Step 2 — Read the queue
 
 ```bash
 cat web_enrich_queue.json
@@ -56,10 +63,9 @@ cat web_enrich_queue.json
 Parse the JSON array. Each entry has: `id`, `company_name`, `trade_name`,
 `city`, `channel`, `search_query`.
 
-### Step 3 — AUTO-LOOP: search every company
+#### Step 3 — Search each company in this batch
 
-**CRITICAL: Do this automatically for EVERY company in the queue. Do NOT stop
-between companies. Process them in batches of 3-5 parallel WebSearch calls.**
+Process all 10 (or fewer) companies. Run 3-5 parallel WebSearch calls.
 
 For each company in the queue:
 
@@ -118,15 +124,24 @@ Use `""` for any field not found. **Never invent data.**
 
 Then immediately continue to the next company. Do NOT pause.
 
-### Step 4 — Compile
+#### Step 3f — After finishing this batch, loop back
 
-After ALL companies are done:
+```bash
+python retailer_enrich.py status
+```
+
+Print progress. Then **GO BACK TO STEP 1** — run `prepare --limit 10` again.
+It will auto-skip the companies you just did and give you the next 10.
+
+**Keep looping until `prepare` says "0 companies to search".**
+
+#### Step 4 — Compile (only when ALL batches are done)
 
 ```bash
 python retailer_enrich.py compile
 ```
 
-### Step 5 — Report
+#### Step 5 — Report
 
 Show a summary table with:
 - Total companies searched

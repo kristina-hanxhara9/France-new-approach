@@ -465,15 +465,26 @@ through every company in the queue — do NOT stop, do NOT ask for confirmation.
 **TEST: If you have not made a WebSearch tool call for a company, you CANNOT
 save any data for that company. Period.**
 
-## Step 1 — Prepare the queue
+## Execution — BATCH MODE (10 companies per cycle)
+
+**WHY BATCHES:** Processing hundreds of companies in one go causes context
+overflow, leading to fabricated results. Process exactly 10 at a time, then
+re-prepare to get the next 10. The `prepare` command auto-skips companies
+already in the results file, so each cycle picks up where the last left off.
+
+### BATCH LOOP — repeat until done:
+
+#### Step 1 — Prepare a batch of 10
 
 ```bash
-python retailer_enrich.py prepare $ARGUMENTS
+python retailer_enrich.py prepare --limit 10
 ```
 
-Reads `{input_file}` ("All Retailers" tab) → outputs `web_enrich_queue.json`.
+Reads `{input_file}`, skips already-done companies, outputs next 10 to queue.
 
-## Step 2 — Read the queue
+**If the queue is empty (0 companies to search), go to Step 4 — you are done.**
+
+#### Step 2 — Read the queue
 
 ```bash
 cat web_enrich_queue.json
@@ -481,9 +492,9 @@ cat web_enrich_queue.json
 
 Each entry has: `id`, `company_name`, `trade_name`, `city`, `channel`, `search_query`.
 
-## Step 3 — AUTO-LOOP: search every company
+#### Step 3 — Search each company in this batch
 
-**Process ALL companies automatically. Run 3-5 WebSearch calls in parallel.**
+Process all 10 (or fewer) companies. Run 3-5 parallel WebSearch calls.
 
 For each company:
 
@@ -531,26 +542,38 @@ python retailer_enrich.py save --id {{ID}} --json '{{"website":"...","phone":"..
 Use `""` for any field not found. **Never invent data.**
 Print `[N/TOTAL] Company Name — done` after each save. Continue immediately.
 
-## Step 4 — Compile
+#### Step 3f — After finishing this batch, loop back
+
+```bash
+python retailer_enrich.py status
+```
+
+Print progress. Then **GO BACK TO STEP 1** — run `prepare --limit 10` again.
+It auto-skips done companies and gives the next 10.
+
+**Keep looping until `prepare` says "0 companies to search".**
+
+#### Step 4 — Compile (only when ALL batches are done)
 
 ```bash
 python retailer_enrich.py compile
 ```
 
-## Step 5 — Report summary
+#### Step 5 — Report summary
 
 Show: total searched, websites found, phones found, emails found, channel matches.
 
 ## Rules
 
-1. **AUTOMATIC**: Process all companies without stopping.
+1. **AUTOMATIC**: Process all batches without stopping. Never ask "should I continue?"
 2. **REAL SEARCH ONLY**: You MUST call WebSearch for every company. NEVER use training knowledge.
-3. **PARALLEL**: 3-5 WebSearch calls in parallel.
-4. **SKIP DONE**: If already in results file, skip.
-5. **NEVER INVENT**: If WebSearch returned nothing, save empty strings. Do NOT guess.
-6. **SAVE OFTEN**: After each company.
-7. **403 IS OK**: Use search snippets instead.
-8. **SOURCE**: Every data point must come from a WebSearch snippet or WebFetch page.
+3. **BATCH OF 10**: Always `prepare --limit 10`. Never load more than 10 at once.
+4. **PARALLEL**: 3-5 WebSearch calls in parallel within each batch.
+5. **LOOP**: After each batch, run `prepare --limit 10` again for the next batch.
+6. **NEVER INVENT**: If WebSearch returned nothing, save empty strings. Do NOT guess.
+7. **SAVE OFTEN**: After each company.
+8. **403 IS OK**: Use search snippets instead.
+9. **SOURCE**: Every data point must come from a WebSearch snippet or WebFetch page.
 """)
 
     # Output
