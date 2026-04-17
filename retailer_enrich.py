@@ -430,150 +430,157 @@ def cmd_skill(args):
     webfetch_prompt = CONFIG.get("webfetch_prompt", "Extract phone, email, products, description, social media links.")
     skill_name = CONFIG.get("skill_name", "web-enrich-retailers")
 
+    # Build channel keywords block for subagent prompt
+    ch_lines_sub = []
+    for name, ch_cfg in CONFIG["channels"].items():
+        kws = ", ".join(ch_cfg["web_keywords"][:8])
+        ch_lines_sub.append(f"- {name}: {kws}")
+    channel_block_sub = "\n".join(ch_lines_sub)
+
     skill_md = textwrap.dedent(f"""\
 ---
 name: {skill_name}
 description: >-
   Enrich {country} retailers from {input_file} with web data.
-  Automatically loops through ALL companies — WebSearch for each one,
-  WebFetch their website, extract phone/email/products/description/business type.
-  No manual intervention needed.
+  Spawns subagents (10 companies each) that call WebSearch for every company.
+  Fully automatic — no manual intervention needed.
 user-invocable: true
 argument-hint: "[--limit N]"
 allowed-tools: Read, Bash, WebSearch, WebFetch, Grep, Glob
 ---
 
-# Web Enrichment Agent — {country} Retailers
+# Web Enrichment Agent — Orchestrator
 
-You are an AUTOMATED web research agent. When invoked, AUTOMATICALLY loop
-through every company in the queue — do NOT stop, do NOT ask for confirmation.
+You are the ORCHESTRATOR. You do NOT search the web yourself. You spawn
+subagents — each one handles exactly 10 companies with a fresh context.
 
-## MANDATORY: Real web search only — NEVER use training data
+## How it works
 
-**YOU MUST CALL THE WebSearch TOOL FOR EVERY SINGLE COMPANY.**
+1. Run `prepare --limit 10` to get the next batch
+2. Spawn a **subagent** with the batch — it does all the WebSearch calls
+3. When the subagent finishes, run `prepare --limit 10` again for the next batch
+4. Repeat until 0 companies remain
+5. Run `compile` at the end
 
-- You MUST invoke the `WebSearch` tool to get data. Do NOT skip this step.
-- NEVER fill in website, phone, email, description, or products from your own
-  knowledge or training data. You do NOT know these companies.
-- If WebSearch returns no useful results, save ALL fields as empty strings `""`.
-- Every piece of data you save MUST come from a WebSearch result snippet or a
-  WebFetch page. If you cannot point to which search result gave you the data,
-  you are fabricating — stop and save empty strings instead.
-- Do NOT say "I know this company is..." or "Based on my knowledge..." — you
-  know NOTHING. Only WebSearch and WebFetch know.
+Each subagent gets a clean context with only 10 companies, so it ALWAYS calls
+WebSearch properly and never fabricates data.
 
-**TEST: If you have not made a WebSearch tool call for a company, you CANNOT
-save any data for that company. Period.**
+## Step 1 — LOOP: Spawn subagents for batches of 10
 
-## Execution — BATCH MODE (10 companies per cycle)
+Repeat this loop until done:
 
-**WHY BATCHES:** Processing hundreds of companies in one go causes context
-overflow, leading to fabricated results. Process exactly 10 at a time, then
-re-prepare to get the next 10. The `prepare` command auto-skips companies
-already in the results file, so each cycle picks up where the last left off.
-
-### BATCH LOOP — repeat until done:
-
-#### Step 1 — Prepare a batch of 10
+### 1a. Prepare the next batch
 
 ```bash
 python retailer_enrich.py prepare --limit 10
 ```
 
-Reads `{input_file}`, skips already-done companies, outputs next 10 to queue.
+**If output says "0 companies to search" → go to Step 2 (compile).**
 
-**If the queue is empty (0 companies to search), go to Step 4 — you are done.**
-
-#### Step 2 — Read the queue
+### 1b. Read the queue
 
 ```bash
 cat web_enrich_queue.json
 ```
 
-Each entry has: `id`, `company_name`, `trade_name`, `city`, `channel`, `search_query`.
+### 1c. Spawn a subagent for this batch
 
-#### Step 3 — Search each company in this batch
+Use the **Agent** tool to spawn a subagent. Pass the FULL queue JSON and the
+instructions below as the subagent's prompt.
 
-Process all 10 (or fewer) companies. Run 3-5 parallel WebSearch calls.
+**Subagent prompt — copy this exactly, replacing {{QUEUE_JSON}} with the actual
+queue contents:**
 
-For each company:
+---BEGIN SUBAGENT PROMPT---
 
-### 3a. WebSearch (MANDATORY — you MUST call this tool)
+You are a web research agent. You MUST call WebSearch for every company below.
+NEVER use training data. NEVER fabricate. If WebSearch returns nothing, save "".
 
-Call **WebSearch** with query: the `search_query` field from the queue.
+## Companies to search:
 
-Set `blocked_domains`: {blocked}
+{{QUEUE_JSON}}
 
-**From the WebSearch result snippets ONLY**, extract:
-- **website**: company's own URL (skip social media, directories)
-- **phone**: customer service number if mentioned in snippets
-- **web_description**: what the company does (1-2 sentences from snippets)
-- **web_products**: product categories sold (comma-separated, from snippets)
-- **web_business_type**: "Chain (N stores)" / "Independent" / "Buying group"
+## For EACH company, do these steps:
 
-**If a field is not visible in the search results, set it to `""`.**
+### A. WebSearch (MANDATORY)
+Call WebSearch with the `search_query` field.
+Set blocked_domains: {blocked}
 
-### 3b. WebFetch (optional — only if WebSearch found a website)
+From the search result snippets ONLY, extract:
+- website: the company's own URL (skip facebook, linkedin, societe.com, etc.)
+- phone: customer service number if in snippets
+- web_description: what the company does (1-2 sentences from snippets)
+- web_products: product categories sold (comma-separated, from snippets)
+- web_business_type: "Chain (N stores)" / "Independent" / "Buying group"
 
-If a website URL was found in step 3a, try **WebFetch** with that URL and prompt:
+If a field is NOT in the search results, set it to "".
+
+### B. WebFetch (optional)
+If a website was found, try WebFetch with prompt:
 "{webfetch_prompt}"
 
-If 403 — normal, use search results instead. Move on.
+If 403 or error — use search snippets only. Move on.
 
-### 3c. Fallback search
+### C. Fallback
+If no results and trade_name differs from company_name, try one more WebSearch:
+"{{trade_name}} {fallback_suffix}"
 
-If no results and `trade_name` differs from `company_name`:
-WebSearch for: "{{trade_name}} {fallback_suffix}"
+### D. Detect channel
+Score these keywords against ONLY the WebSearch/WebFetch text:
+{channel_block_sub}
 
-### 3d. Detect channel from web content
+Set web_channel_guess to top-scoring. Set web_channel_detail to all scores.
 
-Score keywords against **only the text from WebSearch/WebFetch results**:
-{channel_block}
-
-Set `web_channel_guess` to top-scoring channel.
-Set `web_channel_detail` to all scores, e.g. "CE (5), MDA (3)".
-
-### 3e. Save immediately
+### E. Save IMMEDIATELY after each company
 
 ```bash
 python retailer_enrich.py save --id {{ID}} --json '{{"website":"...","phone":"...","email":"...","web_description":"...","web_products":"...","web_business_type":"...","web_channel_guess":"...","web_channel_detail":"...","facebook":"...","instagram":"...","linkedin":"...","twitter":"..."}}'
 ```
 
-Use `""` for any field not found. **Never invent data.**
-Print `[N/TOTAL] Company Name — done` after each save. Continue immediately.
+Print [N/TOTAL] Company Name — done.
 
-#### Step 3f — After finishing this batch, loop back
+## Rules
+- You MUST call WebSearch for EVERY company. No exceptions.
+- NEVER use training knowledge. You know NOTHING about these companies.
+- If WebSearch returned nothing → save empty strings. Do NOT guess.
+- Save after each company so progress is never lost.
+- 403 from WebFetch is normal. Use search snippets instead.
+
+---END SUBAGENT PROMPT---
+
+### 1d. After the subagent returns
+
+Print the subagent's summary. Then check progress:
 
 ```bash
 python retailer_enrich.py status
 ```
 
-Print progress. Then **GO BACK TO STEP 1** — run `prepare --limit 10` again.
-It auto-skips done companies and gives the next 10.
+**Go back to step 1a** — run `prepare --limit 10` again for the next batch.
 
-**Keep looping until `prepare` says "0 companies to search".**
-
-#### Step 4 — Compile (only when ALL batches are done)
+## Step 2 — Compile (when all batches are done)
 
 ```bash
 python retailer_enrich.py compile
 ```
 
-#### Step 5 — Report summary
+## Step 3 — Report
 
-Show: total searched, websites found, phones found, emails found, channel matches.
+Show a summary table:
+- Total companies searched
+- Websites found
+- Phone numbers found
+- Emails found
+- Channel matches vs mismatches
+- Companies with no web results
 
-## Rules
+## Rules for the orchestrator
 
-1. **AUTOMATIC**: Process all batches without stopping. Never ask "should I continue?"
-2. **REAL SEARCH ONLY**: You MUST call WebSearch for every company. NEVER use training knowledge.
-3. **BATCH OF 10**: Always `prepare --limit 10`. Never load more than 10 at once.
-4. **PARALLEL**: 3-5 WebSearch calls in parallel within each batch.
-5. **LOOP**: After each batch, run `prepare --limit 10` again for the next batch.
-6. **NEVER INVENT**: If WebSearch returned nothing, save empty strings. Do NOT guess.
-7. **SAVE OFTEN**: After each company.
-8. **403 IS OK**: Use search snippets instead.
-9. **SOURCE**: Every data point must come from a WebSearch snippet or WebFetch page.
+1. **NEVER search yourself.** Always spawn a subagent.
+2. **10 per subagent.** Never pass more than 10 companies to a subagent.
+3. **LOOP until done.** Keep spawning subagents until prepare says 0 remaining.
+4. **COMPILE once** at the very end after all batches.
+5. **NEVER INVENT data.** Neither you nor the subagent should fabricate anything.
 """)
 
     # Output
