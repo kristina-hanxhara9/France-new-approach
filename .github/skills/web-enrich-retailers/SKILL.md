@@ -17,6 +17,23 @@ loop through every company in the queue and search for each one — do NOT stop,
 do NOT ask for confirmation, do NOT wait for the user between companies. Run the
 entire pipeline from start to finish in one go.
 
+## ⚠️ MANDATORY: Real web search only — NEVER use training data
+
+**YOU MUST CALL THE WebSearch TOOL FOR EVERY SINGLE COMPANY.**
+
+- You MUST invoke the `WebSearch` tool to get data. Do NOT skip this step.
+- NEVER fill in website, phone, email, description, or products from your own
+  knowledge or training data. You do NOT know these companies.
+- If WebSearch returns no useful results, save ALL fields as empty strings `""`.
+- Every piece of data you save MUST come from a WebSearch result snippet or a
+  WebFetch page. If you cannot point to which search result gave you the data,
+  you are fabricating — stop and save empty strings instead.
+- Do NOT say "I know this company is..." or "Based on my knowledge..." — you
+  know NOTHING. Only WebSearch and WebFetch know.
+
+**TEST: If you have not made a WebSearch tool call for a company, you CANNOT
+save any data for that company. Period.**
+
 ## Automatic execution — full pipeline
 
 Run these steps in order, automatically, without pausing:
@@ -24,7 +41,7 @@ Run these steps in order, automatically, without pausing:
 ### Step 1 — Prepare the queue
 
 ```bash
-python web_enrich_agent.py prepare $ARGUMENTS
+python retailer_enrich.py prepare $ARGUMENTS
 ```
 
 This reads `france_retailers-with-keywords.xlsx` ("All Retailers" tab) and
@@ -36,7 +53,7 @@ outputs `web_enrich_queue.json`.
 cat web_enrich_queue.json
 ```
 
-Parse the JSON array. Each entry has: `siren`, `legal_name`, `trade_name`,
+Parse the JSON array. Each entry has: `id`, `company_name`, `trade_name`,
 `city`, `channel`, `search_query`.
 
 ### Step 3 — AUTO-LOOP: search every company
@@ -46,22 +63,24 @@ between companies. Process them in batches of 3-5 parallel WebSearch calls.**
 
 For each company in the queue:
 
-#### 3a. WebSearch
+#### 3a. WebSearch (MANDATORY — you MUST call this tool)
 
-Call **WebSearch** with query: `"{legal_name} {city} france magasin site officiel"`
+Call **WebSearch** with query: the `search_query` field from the queue entry.
 
 Set `blocked_domains`: `["societe.com", "verif.com", "pappers.fr", "wikipedia.org", "indeed.fr", "glassdoor.fr"]`
 
-From the search results, extract:
+**From the WebSearch result snippets ONLY**, extract:
 - **website**: the company's own URL (skip social media, directories, job sites)
-- **phone**: customer service number if mentioned
+- **phone**: customer service number if mentioned in snippets
 - **web_description**: what the company does (1-2 sentences from snippets)
-- **web_products**: product categories they sell (comma-separated)
+- **web_products**: product categories they sell (comma-separated, from snippets)
 - **web_business_type**: "Chain (N stores)" or "Independent" or "Buying group (N members)"
 
-#### 3b. WebFetch (optional)
+**If a field is not visible in the search results, set it to `""`.**
 
-If a website was found, try **WebFetch** with prompt:
+#### 3b. WebFetch (optional — only if WebSearch found a website)
+
+If a website URL was found in step 3a, try **WebFetch** with that URL and prompt:
 "Extract: 1) phone number, 2) email, 3) social media links (facebook, instagram,
 linkedin, twitter), 4) products sold, 5) business description, 6) number of stores.
 Return structured data."
@@ -69,13 +88,13 @@ Return structured data."
 If WebFetch returns 403 or fails — that is normal for French retail sites. Use
 the WebSearch results instead. Do NOT retry, just move on.
 
-#### 3c. If legal_name gave no results and trade_name differs
+#### 3c. Fallback: if no results and trade_name differs from company_name
 
-Try one more WebSearch: `"{trade_name} magasin france"`
+Try one more **WebSearch**: `"{trade_name} magasin france"`
 
 #### 3d. Detect channel from web content
 
-Score these keywords against what you found:
+Score these keywords against **only the text from WebSearch/WebFetch results**:
 - **Photo**: photo, camera, objectif, optique, reflex, hybride
 - **CE**: informatique, ordinateur, multimedia, audio, video, tv, gaming
 - **MDA**: electromenager, lave-linge, refrigerateur, four, cuisiniere
@@ -92,7 +111,7 @@ Set `web_channel_detail` to all channels with scores, e.g. "CE (5), MDA (3)".
 After EACH company, save immediately (so progress is never lost):
 
 ```bash
-python web_enrich_agent.py save --siren {SIREN} --json '{"website":"...","phone":"...","email":"...","web_description":"...","web_products":"...","web_business_type":"...","web_channel_guess":"...","web_channel_detail":"...","facebook":"...","instagram":"...","linkedin":"...","twitter":"..."}'
+python retailer_enrich.py save --id {ID} --json '{"website":"...","phone":"...","email":"...","web_description":"...","web_products":"...","web_business_type":"...","web_channel_guess":"...","web_channel_detail":"...","facebook":"...","instagram":"...","linkedin":"...","twitter":"..."}'
 ```
 
 Use `""` for any field not found. **Never invent data.**
@@ -104,7 +123,7 @@ Then immediately continue to the next company. Do NOT pause.
 After ALL companies are done:
 
 ```bash
-python web_enrich_agent.py compile
+python retailer_enrich.py compile
 ```
 
 ### Step 5 — Report
@@ -120,9 +139,11 @@ Show a summary table with:
 ## Rules
 
 1. **AUTOMATIC**: Process all companies without stopping. Never ask "should I continue?"
-2. **PARALLEL**: Run 3-5 WebSearch calls in parallel when possible to go faster.
-3. **SKIP DONE**: If a company is already in `web_enrich_results.json`, skip it.
-4. **NEVER INVENT**: Empty string is better than made-up data.
-5. **SAVE OFTEN**: Save after each company. If interrupted, progress is kept.
-6. **403 IS OK**: Many French sites block bots. Use search snippets instead.
-7. **PROGRESS**: Print `[N/TOTAL] Company Name — done` after each save.
+2. **REAL SEARCH ONLY**: You MUST call WebSearch for every company. NEVER use training knowledge.
+3. **PARALLEL**: Run 3-5 WebSearch calls in parallel when possible to go faster.
+4. **SKIP DONE**: If a company is already in `web_enrich_results.json`, skip it.
+5. **NEVER INVENT**: If WebSearch returned nothing, save empty strings. Do NOT guess.
+6. **SAVE OFTEN**: Save after each company. If interrupted, progress is kept.
+7. **403 IS OK**: Many French sites block bots. Use search snippets instead.
+8. **PROGRESS**: Print `[N/TOTAL] Company Name — done` after each save.
+9. **SOURCE**: Every data point must come from a WebSearch snippet or WebFetch page.

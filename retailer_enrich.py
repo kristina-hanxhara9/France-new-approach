@@ -448,6 +448,23 @@ allowed-tools: Read, Bash, WebSearch, WebFetch, Grep, Glob
 You are an AUTOMATED web research agent. When invoked, AUTOMATICALLY loop
 through every company in the queue — do NOT stop, do NOT ask for confirmation.
 
+## MANDATORY: Real web search only — NEVER use training data
+
+**YOU MUST CALL THE WebSearch TOOL FOR EVERY SINGLE COMPANY.**
+
+- You MUST invoke the `WebSearch` tool to get data. Do NOT skip this step.
+- NEVER fill in website, phone, email, description, or products from your own
+  knowledge or training data. You do NOT know these companies.
+- If WebSearch returns no useful results, save ALL fields as empty strings `""`.
+- Every piece of data you save MUST come from a WebSearch result snippet or a
+  WebFetch page. If you cannot point to which search result gave you the data,
+  you are fabricating — stop and save empty strings instead.
+- Do NOT say "I know this company is..." or "Based on my knowledge..." — you
+  know NOTHING. Only WebSearch and WebFetch know.
+
+**TEST: If you have not made a WebSearch tool call for a company, you CANNOT
+save any data for that company. Period.**
+
 ## Step 1 — Prepare the queue
 
 ```bash
@@ -470,22 +487,24 @@ Each entry has: `id`, `company_name`, `trade_name`, `city`, `channel`, `search_q
 
 For each company:
 
-### 3a. WebSearch
+### 3a. WebSearch (MANDATORY — you MUST call this tool)
 
 Call **WebSearch** with query: the `search_query` field from the queue.
 
 Set `blocked_domains`: {blocked}
 
-From results, extract:
+**From the WebSearch result snippets ONLY**, extract:
 - **website**: company's own URL (skip social media, directories)
-- **phone**: customer service number
-- **web_description**: what the company does (1-2 sentences)
-- **web_products**: product categories sold (comma-separated)
+- **phone**: customer service number if mentioned in snippets
+- **web_description**: what the company does (1-2 sentences from snippets)
+- **web_products**: product categories sold (comma-separated, from snippets)
 - **web_business_type**: "Chain (N stores)" / "Independent" / "Buying group"
 
-### 3b. WebFetch (optional)
+**If a field is not visible in the search results, set it to `""`.**
 
-If a website was found, try **WebFetch** with prompt:
+### 3b. WebFetch (optional — only if WebSearch found a website)
+
+If a website URL was found in step 3a, try **WebFetch** with that URL and prompt:
 "{webfetch_prompt}"
 
 If 403 — normal, use search results instead. Move on.
@@ -497,7 +516,7 @@ WebSearch for: "{{trade_name}} {fallback_suffix}"
 
 ### 3d. Detect channel from web content
 
-Score keywords against what you found:
+Score keywords against **only the text from WebSearch/WebFetch results**:
 {channel_block}
 
 Set `web_channel_guess` to top-scoring channel.
@@ -525,11 +544,13 @@ Show: total searched, websites found, phones found, emails found, channel matche
 ## Rules
 
 1. **AUTOMATIC**: Process all companies without stopping.
-2. **PARALLEL**: 3-5 WebSearch calls in parallel.
-3. **SKIP DONE**: If already in results file, skip.
-4. **NEVER INVENT**: Empty string over made-up data.
-5. **SAVE OFTEN**: After each company.
-6. **403 IS OK**: Use search snippets instead.
+2. **REAL SEARCH ONLY**: You MUST call WebSearch for every company. NEVER use training knowledge.
+3. **PARALLEL**: 3-5 WebSearch calls in parallel.
+4. **SKIP DONE**: If already in results file, skip.
+5. **NEVER INVENT**: If WebSearch returned nothing, save empty strings. Do NOT guess.
+6. **SAVE OFTEN**: After each company.
+7. **403 IS OK**: Use search snippets instead.
+8. **SOURCE**: Every data point must come from a WebSearch snippet or WebFetch page.
 """)
 
     # Output
